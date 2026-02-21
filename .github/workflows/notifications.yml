@@ -1,0 +1,106 @@
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  REUSABLE: Pipeline Notifications                              ║
+# ║  Sends failure/success alerts to configured channels          ║
+# ╚══════════════════════════════════════════════════════════════════╝
+name: "Reusable: Pipeline Notifications"
+
+on:
+  workflow_call:
+    inputs:
+      status:
+        required: true
+        type: string
+        description: "Pipeline status (success|failure|cancelled)"
+      system-dir:
+        required: true
+        type: string
+        description: "System name or comma-separated system names"
+      pipeline-type:
+        required: false
+        type: string
+        default: "CI/CD"
+        description: "Pipeline type (CI/CD, Staging, Production)"
+      error-details:
+        required: false
+        type: string
+        default: ""
+        description: "Error details for failure notifications"
+    secrets:
+      SLACK_WEBHOOK_URL:
+        required: false
+      DISCORD_WEBHOOK_URL:
+        required: false
+
+jobs:
+  notify:
+    name: "Send Notification"
+    runs-on: ubuntu-latest
+    env:
+      HAS_SLACK: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+      HAS_DISCORD: ${{ secrets.DISCORD_WEBHOOK_URL != '' }}
+    steps:
+      - name: Prepare Notification
+        id: prepare
+        run: |
+          if [ "${{ inputs.status }}" = "success" ]; then
+            EMOJI="✅"
+            COLOR="good"
+            TITLE="Pipeline Succeeded"
+          elif [ "${{ inputs.status }}" = "failure" ]; then
+            EMOJI="❌"
+            COLOR="danger"
+            TITLE="Pipeline Failed"
+          else
+            EMOJI="⚠️"
+            COLOR="warning"
+            TITLE="Pipeline Cancelled"
+          fi
+
+          echo "emoji=$EMOJI" >> $GITHUB_OUTPUT
+          echo "color=$COLOR" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+
+          echo "$EMOJI $TITLE"
+          echo "  Systems:  ${{ inputs.system-dir }}"
+          echo "  Pipeline: ${{ inputs.pipeline-type }}"
+          echo "  Branch:   ${{ github.ref_name }}"
+          echo "  Commit:   ${{ github.sha }}"
+          echo "  Actor:    ${{ github.actor }}"
+          echo "  Run URL:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Notify Slack
+        if: env.HAS_SLACK == 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"attachments\": [{
+                \"color\": \"${{ steps.prepare.outputs.color }}\",
+                \"title\": \"${{ steps.prepare.outputs.emoji }} ${{ steps.prepare.outputs.title }}\",
+                \"fields\": [
+                  {\"title\": \"System\", \"value\": \"${{ inputs.system-dir }}\", \"short\": true},
+                  {\"title\": \"Pipeline\", \"value\": \"${{ inputs.pipeline-type }}\", \"short\": true},
+                  {\"title\": \"Branch\", \"value\": \"${{ github.ref_name }}\", \"short\": true},
+                  {\"title\": \"Actor\", \"value\": \"${{ github.actor }}\", \"short\": true}
+                ],
+                \"footer\": \"<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Run>\"
+              }]
+            }"
+
+      - name: Notify Discord
+        if: env.HAS_DISCORD == 'true'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          curl -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"${{ steps.prepare.outputs.emoji }} ${{ steps.prepare.outputs.title }}\",
+                \"description\": \"**System:** ${{ inputs.system-dir }}\\n**Pipeline:** ${{ inputs.pipeline-type }}\\n**Branch:** ${{ github.ref_name }}\\n**Actor:** ${{ github.actor }}\",
+                \"url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+              }]
+            }"
+
