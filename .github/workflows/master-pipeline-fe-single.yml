@@ -408,3 +408,16 @@ jobs:
           echo "Repository: ${{ github.repository }}"
           echo "Branch:     ${{ github.ref_name }}"
           echo "Frontend:   ${{ needs.frontend.result }}"
+
+  notify-pipeline:
+    name: "Notify Pipeline Status"
+    needs: [pipeline-summary, frontend]
+    if: always()
+    uses: ./.github/workflows/notifications.yml
+    with:
+      status: ${{ needs.frontend.result == 'success' && 'success' || (needs.frontend.result == 'cancelled' && 'cancelled' || 'failure') }}
+      system-dir: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}
+      pipeline-type: FE Single Master
+      error-details: ${{ needs.frontend.result != 'success' && 'Master FE single pipeline reported failures.' || '' }}
+    secrets:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
