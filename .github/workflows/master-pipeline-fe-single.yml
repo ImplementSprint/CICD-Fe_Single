@@ -264,6 +264,11 @@ jobs:
       system1-url: ${{ needs.deploy-test.outputs.deployment_url }}
       system1-result: ${{ needs.frontend.result }}
       version-tag: ${{ needs.version-test.outputs.version_tag }}
+      tests-status: ${{ needs.frontend.result }}
+      lint-status: ${{ needs.frontend.result }}
+      security-status: ${{ needs.frontend.result }}
+      sonar-status: ${{ needs.frontend.result }}
+      pipeline-result: ${{ (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') && 'success' || (needs.frontend.result == 'cancelled' && 'cancelled' || 'failure') }}
       dry-run: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
     secrets:
       PR_TOKEN: ${{ secrets.GH_PR_TOKEN }}
@@ -284,6 +289,11 @@ jobs:
       system1-name: ${{ needs.systems-config.outputs.system_name }}
       system1-url: ${{ needs.deploy-uat.outputs.deployment_url }}
       system1-result: ${{ needs.frontend.result }}
+      tests-status: ${{ needs.frontend.result }}
+      lint-status: ${{ needs.frontend.result }}
+      security-status: ${{ needs.frontend.result }}
+      sonar-status: ${{ needs.frontend.result }}
+      pipeline-result: ${{ (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') && 'success' || (needs.frontend.result == 'cancelled' && 'cancelled' || 'failure') }}
       dry-run: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
     secrets:
       PR_TOKEN: ${{ secrets.GH_PR_TOKEN }}
@@ -361,14 +371,15 @@ jobs:
 
   notify-pipeline:
     name: "Notify Pipeline Status"
-    needs: [pipeline-summary, frontend, systems-config, auto-revert-on-failure]
+    needs: [pipeline-summary, frontend, systems-config, deploy-test, deploy-uat, deploy-prod, auto-revert-on-failure]
     if: always()
     uses: ./.github/workflows/notifications.yml
     with:
-      status: ${{ needs.frontend.result == 'success' && 'success' || (needs.frontend.result == 'cancelled' && 'cancelled' || 'failure') }}
+      status: ${{ (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') && 'success' || (needs.frontend.result == 'cancelled' && 'cancelled' || 'failure') }}
       system-dir: ${{ needs.systems-config.outputs.system_name }}
       pipeline-type: FE Single Master
-      error-details: ${{ needs.frontend.result != 'success' && 'Master FE single pipeline reported failures.' || '' }}
+      error-details: ${{ needs.frontend.result != 'success' && needs.frontend.result != 'skipped' && 'Master FE single pipeline reported failures.' || '' }}
+      deployment-url: ${{ github.ref_name == 'main' && needs.deploy-prod.outputs.deployment_url || (github.ref_name == 'uat' && needs.deploy-uat.outputs.deployment_url || (github.ref_name == 'test' && needs.deploy-test.outputs.deployment_url || '')) }}
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}

@@ -67,6 +67,26 @@ on:
         required: false
         type: string
         default: ""
+      tests-status:
+        required: false
+        type: string
+        default: ""
+      lint-status:
+        required: false
+        type: string
+        default: ""
+      security-status:
+        required: false
+        type: string
+        default: ""
+      sonar-status:
+        required: false
+        type: string
+        default: ""
+      pipeline-result:
+        required: false
+        type: string
+        default: ""
     secrets:
       PR_TOKEN:
         required: true
@@ -110,6 +130,11 @@ jobs:
           RESULTS_JSON_INPUT: ${{ inputs.results-json }}
           VERSION_TAG_INPUT: ${{ inputs.version-tag }}
           DRY_RUN: ${{ inputs.dry-run }}
+          TESTS_STATUS_INPUT: ${{ inputs.tests-status }}
+          LINT_STATUS_INPUT: ${{ inputs.lint-status }}
+          SECURITY_STATUS_INPUT: ${{ inputs.security-status }}
+          SONAR_STATUS_INPUT: ${{ inputs.sonar-status }}
+          PIPELINE_RESULT_INPUT: ${{ inputs.pipeline-result }}
         run: |
           retry() {
             local attempts=$1
@@ -238,6 +263,18 @@ jobs:
               DEFAULT_RESULT="success"
             fi
 
+            TESTS_STATUS="${TESTS_STATUS_INPUT}"
+            LINT_STATUS="${LINT_STATUS_INPUT}"
+            SECURITY_STATUS="${SECURITY_STATUS_INPUT}"
+            SONAR_STATUS="${SONAR_STATUS_INPUT}"
+            PIPELINE_RESULT="${PIPELINE_RESULT_INPUT}"
+
+            if [ -z "${TESTS_STATUS}" ]; then TESTS_STATUS="${DEFAULT_RESULT}"; fi
+            if [ -z "${LINT_STATUS}" ]; then LINT_STATUS="${DEFAULT_RESULT}"; fi
+            if [ -z "${SECURITY_STATUS}" ]; then SECURITY_STATUS="${DEFAULT_RESULT}"; fi
+            if [ -z "${SONAR_STATUS}" ]; then SONAR_STATUS="${DEFAULT_RESULT}"; fi
+            if [ -z "${PIPELINE_RESULT}" ]; then PIPELINE_RESULT="${DEFAULT_RESULT}"; fi
+
             DEPLOYMENT_URLS_JSON=$(echo "${SYSTEMS_JSON}" | jq -c --argjson urls "${DEPLOYMENT_URLS_JSON}" --arg runUrl "${RUN_URL}" '
               reduce .[] as $s ({};
                 .[$s.name] = ((($urls[$s.name] // "") | tostring) | if length > 0 then . else $runUrl end)
@@ -274,6 +311,9 @@ jobs:
           EVIDENCE_ROWS=$(printf "%s\n| Deployment Links | %s available |" "${EVIDENCE_ROWS}" "${AVAILABLE_LINKS}")
           EVIDENCE_ROWS=$(printf "%s\n| Version Tag | %s |" "${EVIDENCE_ROWS}" "${VERSION_TAG:-N/A}")
 
+          RELEASE_SUMMARY=$(printf -- "| Metric | Value |\n|--------|-------|\n| Version Tag | %s |\n| Short SHA | %s |\n| Compare | [View changes](%s) |\n| Pipeline Result | %s |" "${VERSION_TAG:-N/A}" "${SHORT_SHA}" "${COMPARE_URL}" "${PIPELINE_RESULT}")
+          QUALITY_GATES=$(printf -- "| Gate | Status |\n|------|--------|\n| Tests | %s |\n| Lint | %s |\n| Security | %s |\n| Sonar | %s |" "${TESTS_STATUS}" "${LINT_STATUS}" "${SECURITY_STATUS}" "${SONAR_STATUS}")
+
           DETAILS=$(printf -- "- **Source branch:** %s\n- **Target branch:** %s" "${SOURCE_BRANCH}" "${TARGET_BRANCH}")
           DETAILS=$(printf "%s\n- **Version tag:** \`%s\`" "${DETAILS}" "${VERSION_TAG:-N/A}")
           DETAILS=$(printf "%s\n- **Commit:** \`%s\`\n- **Compare:** [View changes](%s)\n- **Triggered at:** %s\n- **Pipeline run:** [View workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" "${DETAILS}" "${SHORT_SHA}" "${COMPARE_URL}" "${TIMESTAMP}")
@@ -295,6 +335,12 @@ jobs:
           | Check | Status |
           |-------|--------|
           ${EVIDENCE_ROWS}
+
+          ### 🧾 Release Summary
+          ${RELEASE_SUMMARY}
+
+          ### 🛡️ Quality Gates
+          ${QUALITY_GATES}
 
           ### 🔍 Details
           ${DETAILS}
