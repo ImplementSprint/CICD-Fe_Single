@@ -68,6 +68,38 @@ jobs:
       enable-security-scan: true
     secrets: inherit
 
+  sonarcloud:
+    name: "SonarCloud — Analysis"
+    needs: [frontend]
+    if: >-
+      always() &&
+      needs.frontend.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Coverage Artifact
+        if: needs.frontend.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}-coverage
+          path: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || '.' }}/coverage
+        continue-on-error: true
+
+      - name: Run SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          args: >
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
+
   validate-vercel-secret-vars:
     name: "Validate Vercel Secret-Name Variables"
     runs-on: ubuntu-latest
