@@ -41,13 +41,21 @@ jobs:
     steps:
       - name: Prepare Notification
         id: prepare
+        env:
+          STATUS: ${{ inputs.status }}
+          SYSTEM_DIR: ${{ inputs.system-dir }}
+          PIPELINE_TYPE: ${{ inputs.pipeline-type }}
+          BRANCH_NAME: ${{ github.ref_name }}
+          ACTOR_NAME: ${{ github.actor }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          if [ "${{ inputs.status }}" = "success" ]; then
+          if [ "${STATUS}" = "success" ]; then
             EMOJI="✅"
             COLOR="good"
             DISCORD_COLOR="3066993"
             TITLE="Pipeline Succeeded"
-          elif [ "${{ inputs.status }}" = "failure" ]; then
+          elif [ "${STATUS}" = "failure" ]; then
             EMOJI="❌"
             COLOR="danger"
             DISCORD_COLOR="15158332"
@@ -59,7 +67,7 @@ jobs:
             TITLE="Pipeline Cancelled"
           fi
 
-          if [ "${{ inputs.status }}" = "failure" ] || [ "${{ inputs.status }}" = "cancelled" ]; then
+          if [ "${STATUS}" = "failure" ] || [ "${STATUS}" = "cancelled" ]; then
             MENTION="<!here>"
           else
             MENTION=""
@@ -72,12 +80,12 @@ jobs:
           echo "mention=$MENTION" >> $GITHUB_OUTPUT
 
           echo "$EMOJI $TITLE"
-          echo "  Systems:  ${{ inputs.system-dir }}"
-          echo "  Pipeline: ${{ inputs.pipeline-type }}"
-          echo "  Branch:   ${{ github.ref_name }}"
-          echo "  Commit:   ${{ github.sha }}"
-          echo "  Actor:    ${{ github.actor }}"
-          echo "  Run URL:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "  Systems:  ${SYSTEM_DIR}"
+          echo "  Pipeline: ${PIPELINE_TYPE}"
+          echo "  Branch:   ${BRANCH_NAME}"
+          echo "  Commit:   ${COMMIT_SHA}"
+          echo "  Actor:    ${ACTOR_NAME}"
+          echo "  Run URL:  ${RUN_URL}"
 
       - name: Notify Slack
         if: env.HAS_SLACK == 'true'

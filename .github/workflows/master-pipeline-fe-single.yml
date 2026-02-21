@@ -141,11 +141,12 @@ jobs:
 
   version-test:
     name: "Version Tag — TEST"
-    needs: [frontend]
+    needs: [frontend, sonarcloud]
     if: >-
       always() &&
       github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') &&
+      (needs.sonarcloud.result == 'success' || needs.sonarcloud.result == 'skipped') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/versioning.yml
     with:
@@ -153,11 +154,12 @@ jobs:
 
   deploy-test:
     name: "TEST — ${{ needs.systems-config.outputs.system_name }}"
-    needs: [frontend, systems-config]
+    needs: [frontend, systems-config, sonarcloud]
     if: >-
       always() &&
       github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || (github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true')) &&
+      (needs.sonarcloud.result == 'success' || needs.sonarcloud.result == 'skipped') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/vercel-deploy.yml
     with:
@@ -170,11 +172,12 @@ jobs:
 
   deploy-uat:
     name: "UAT — ${{ needs.systems-config.outputs.system_name }}"
-    needs: [frontend, systems-config]
+    needs: [frontend, systems-config, sonarcloud]
     if: >-
       always() &&
       github.ref == 'refs/heads/uat' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || (github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true')) &&
+      (needs.sonarcloud.result == 'success' || needs.sonarcloud.result == 'skipped') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/vercel-deploy.yml
     with:
@@ -187,11 +190,12 @@ jobs:
 
   production-gate:
     name: "Production Readiness Gate"
-    needs: [frontend, systems-config]
+    needs: [frontend, systems-config, sonarcloud]
     if: >-
       always() &&
       github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || (github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true')) &&
+      (needs.sonarcloud.result == 'success' || needs.sonarcloud.result == 'skipped') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/production-gate.yml
     with:
@@ -352,7 +356,7 @@ jobs:
 
   notify-pipeline:
     name: "Notify Pipeline Status"
-    needs: [pipeline-summary, frontend, systems-config]
+    needs: [pipeline-summary, frontend, systems-config, auto-revert-on-failure]
     if: always()
     uses: ./.github/workflows/notifications.yml
     with:
