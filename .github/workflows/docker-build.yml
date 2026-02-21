@@ -116,11 +116,27 @@ jobs:
     outputs:
       result: ${{ steps.scan.outcome }}
     steps:
+      - name: Resolve image reference
+        id: image-ref
+        env:
+          OWNER: ${{ github.repository_owner }}
+          IMAGE: ${{ inputs.image-name }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          OWNER_LC=$(echo "${OWNER}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_LC=$(echo "${IMAGE}" | tr '[:upper:]' '[:lower:]')
+          TAG="${RELEASE_TAG}"
+          if [ -z "${TAG}" ]; then
+            TAG="${GIT_SHA}"
+          fi
+          echo "image_ref=ghcr.io/${OWNER_LC}/${IMAGE_LC}:${TAG}" >> "$GITHUB_OUTPUT"
+
       - name: Run Trivy Vulnerability Scanner
         id: scan
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}:${{ inputs.release-tag != '' && inputs.release-tag || github.sha }}
+          image-ref: ${{ steps.image-ref.outputs.image_ref }}
           format: "sarif"
           output: "trivy-results.sarif"
           severity: "CRITICAL,HIGH"
