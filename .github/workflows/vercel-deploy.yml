@@ -125,16 +125,72 @@ jobs:
       - name: Deploy to Vercel
         id: deploy
         run: |
+          BRANCH_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+
           if [ "${{ inputs.environment }}" = "production" ]; then
-            URL=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
+            DEPLOY_OUTPUT=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }} --meta githubCommitRef="${BRANCH_NAME}" --meta githubCommitSha="${GITHUB_SHA}" 2>&1)
           else
-            URL=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
+            DEPLOY_OUTPUT=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }} --meta githubCommitRef="${BRANCH_NAME}" --meta githubCommitSha="${GITHUB_SHA}" 2>&1)
           fi
+
+          URL=$(echo "${DEPLOY_OUTPUT}" | grep -Eo 'https://[^[:space:]]+' | tail -n 1 | tr -d '\r')
+
+          if [ -z "${URL}" ]; then
+            echo "❌ Failed to extract deployment URL from Vercel output."
+            echo "${DEPLOY_OUTPUT}"
+            exit 1
+          fi
+
           echo "url=$URL" >> $GITHUB_OUTPUT
           echo "🚀 Deployed to: $URL"
         working-directory: ${{ steps.prepare.outputs.deploy_dir }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Cleanup previous branch preview deployments
+        if: ${{ inputs.environment == 'preview' }}
+        run: |
+          set -euo pipefail
+
+          BRANCH_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          CURRENT_URL="${{ steps.deploy.outputs.url }}"
+
+          if [ -z "${CURRENT_URL}" ]; then
+            echo "⚠️ Current deployment URL is empty; skipping cleanup."
+            exit 0
+          fi
+
+          API_URL="https://api.vercel.com/v6/deployments?projectId=${VERCEL_PROJECT_ID}&target=preview&meta-githubCommitRef=${BRANCH_NAME}&limit=100"
+          RESPONSE=$(curl -sS -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" "${API_URL}")
+
+          if ! echo "${RESPONSE}" | jq -e . >/dev/null 2>&1; then
+            echo "⚠️ Invalid response from Vercel API; skipping cleanup."
+            exit 0
+          fi
+
+          OLD_URLS=$(echo "${RESPONSE}" | jq -r --arg current "${CURRENT_URL}" '
+            [.deployments[]?
+              | select((.state // "") == "READY")
+              | select((.url // "") != "")
+              | ("https://" + .url)
+              | select(. != $current)
+            ] | unique | .[]
+          ')
+
+          if [ -z "${OLD_URLS}" ]; then
+            echo "ℹ️ No previous preview deployments found for branch '${BRANCH_NAME}'."
+            exit 0
+          fi
+
+          echo "🧹 Removing previous preview deployments for branch '${BRANCH_NAME}'..."
+          while IFS= read -r OLD_URL; do
+            if [ -n "${OLD_URL}" ]; then
+              echo "- Removing ${OLD_URL}"
+              vercel remove "${OLD_URL}" --yes --token=${{ secrets.VERCEL_TOKEN }} || echo "⚠️ Failed to remove ${OLD_URL}; continuing."
+            fi
+          done <<< "${OLD_URLS}"
+        env:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Comment Deployment URL on PR
