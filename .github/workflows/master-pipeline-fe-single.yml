@@ -6,9 +6,9 @@
 # ║    VERCEL_PROJECT_ID_FE_SINGLE (repo secret)                     ║
 # ║                                                                  ║
 # ║  Optional repository variables for reuse/customization:          ║
-# ║    FE_SINGLE_SYSTEM_NAME (default: Frontend-Root)               ║
-# ║    FE_SINGLE_WORKING_DIR (default: .)                           ║
-# ║    FE_SINGLE_IMAGE_NAME (default: fe-single-web)                ║
+# ║    FE_SINGLE_SYSTEM_NAME (default: system-1)                    ║
+# ║    FE_SINGLE_WORKING_DIR (default: system-1)                    ║
+# ║    FE_SINGLE_IMAGE_NAME (default: system-1-web)                 ║
 # ║    FE_SINGLE_VERCEL_PROJECT_SECRET (required, no default)       ║
 # ╚══════════════════════════════════════════════════════════════════╝
 name: "Master Pipeline Orchestrator — FE Single"
@@ -58,13 +58,13 @@ jobs:
               - 'sonar-project.properties'
 
   frontend:
-    name: "${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} Pipeline"
+    name: "${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }} Pipeline"
     needs: [detect-changes]
     if: needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.shared == 'true'
     uses: ./.github/workflows/front-end-workflow.yml
     with:
-      system-dir: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || '.' }}
-      system-name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}
+      system-dir: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || 'system-1' }}
+      system-name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}
       enable-security-scan: true
     secrets: inherit
 
@@ -81,30 +81,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate SonarCloud secrets
-        id: sonar-check
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
-          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
-        run: |
-          if [ -z "${SONAR_TOKEN}" ] || [ -z "${SONAR_ORGANIZATION}" ] || [ -z "${SONAR_PROJECT_KEY}" ]; then
-            echo "run_scan=false" >> $GITHUB_OUTPUT
-            echo "ℹ️ SonarCloud secrets are missing. Skipping SonarCloud scan."
-          else
-            echo "run_scan=true" >> $GITHUB_OUTPUT
-          fi
-
       - name: Download Coverage Artifact
         if: needs.frontend.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}-coverage
-          path: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || '.' }}/coverage
+          name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}-coverage
+          path: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || 'system-1' }}/coverage
         continue-on-error: true
 
       - name: Run SonarCloud Scan
-        if: steps.sonar-check.outputs.run_scan == 'true'
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -177,7 +162,7 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
   deploy-test:
-    name: "TEST — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
+    name: "TEST — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}"
     needs: [frontend, validate-vercel-secret-vars]
     if: >-
       always() &&
@@ -193,7 +178,7 @@ jobs:
       VERCEL_PROJECT_ID: ${{ secrets[vars.FE_SINGLE_VERCEL_PROJECT_SECRET] }}
 
   deploy-uat:
-    name: "UAT — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
+    name: "UAT — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}"
     needs: [frontend, validate-vercel-secret-vars]
     if: >-
       always() &&
@@ -225,20 +210,19 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve Version Tag (from TEST)
+      - name: Resolve Latest TEST Version Tag
         id: version
         run: |
           PREFIX="test-v"
           LATEST=$(git tag -l "${PREFIX}[0-9]*.[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n 1)
 
           if [ -z "${LATEST}" ]; then
-            TAG="test-v1.0.0.0"
-          else
-            TAG="${LATEST}"
+            echo "❌ No test version tag found. UAT version reference requires a prior test tag."
+            exit 1
           fi
 
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "✅ Using version tag for UAT: ${TAG}"
+          echo "tag=${LATEST}" >> $GITHUB_OUTPUT
+          echo "✅ Resolved UAT reference tag: ${LATEST}"
 
   production-gate:
     name: "Production Readiness Gate"
@@ -254,7 +238,7 @@ jobs:
     secrets: inherit
 
   deploy-prod:
-    name: "Prod — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
+    name: "Prod — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}"
     needs: [production-gate, validate-vercel-secret-vars]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     uses: ./.github/workflows/vercel-deploy.yml
@@ -313,13 +297,13 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
   docker-main:
-    name: "GHCR — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
+    name: "GHCR — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}"
     needs: [version-main-release]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     uses: ./.github/workflows/docker-build.yml
     with:
       working-directory: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || '.' }}
-      image-name: ${{ vars.FE_SINGLE_IMAGE_NAME != '' && vars.FE_SINGLE_IMAGE_NAME || 'fe-single-web' }}
+      image-name: ${{ vars.FE_SINGLE_IMAGE_NAME != '' && vars.FE_SINGLE_IMAGE_NAME || 'system-1-web' }}
       release-tag: ${{ needs.version-main-release.outputs.version_tag }}
       push-image: true
       scan-vulnerabilities: true
@@ -365,28 +349,27 @@ jobs:
           EXISTING_PR=$(gh pr list --base uat --head test --state open --json number --jq '.[0].number' 2>/dev/null || true)
           APP_URL="${{ needs.deploy-test.outputs.deployment_url }}"
           VERSION_TAG="${{ needs.version-test.outputs.version_tag }}"
+          UAT_REFERENCE_TAG="${VERSION_TAG}"
           SHORT_SHA="${GITHUB_SHA:0:7}"
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           PR_BODY=$(cat <<ENDOFBODY
           ## 🚀 Promote TEST → UAT
 
-          This PR was automatically created after all CI checks and TEST deployments passed on the \`test\` branch.
+          This PR was **automatically created** after all CI checks and TEST deployments passed on the \`test\` branch.
 
           ### 📋 Pre-merge Checklist
-          - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} on TEST
+          - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }} on TEST
           - [ ] Ready for UAT validation
 
-          ### 🔗 Vercel TEST Deployment Links
-          | System | TEST Preview Link |
-          | --- | --- |
-          | ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} | ${APP_URL:-Not deployed (no changes)} |
+          ### 🔗 Vercel TEST Deployment Link
+          - ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}: ${APP_URL:-Not deployed (no changes)}
 
-          ### 🏷️ Version Tag
-          | Environment | Tag |
-          | --- | --- |
-          | TEST | ${VERSION_TAG:-test-v1.0.0.0} |
+          ### 🏷️ Version References
+          | Environment | Version Tag |
+          |-------------|-------------|
+          | TEST | ${VERSION_TAG} |
+          | UAT (reference) | ${UAT_REFERENCE_TAG} |
 
           ### 🔍 Details
           - **Source branch:** test
@@ -394,11 +377,10 @@ jobs:
           - **Version tag:** \`${VERSION_TAG}\`
           - **Commit:** \`${SHORT_SHA}\`
           - **Triggered at:** ${TIMESTAMP}
-          - **Pipeline run:** [View workflow run](${RUN_URL})
+          - **Pipeline run:** [View workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
           ---
-
-          Merge this PR to trigger UAT deployment.
+          *Merge this PR to trigger UAT deployment.*
           ENDOFBODY
           )
 
@@ -416,7 +398,8 @@ jobs:
       always() &&
       github.ref == 'refs/heads/uat' && github.event_name == 'push' &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') &&
-      (needs.deploy-uat.result == 'success' || needs.deploy-uat.result == 'skipped')
+      (needs.deploy-uat.result == 'success' || needs.deploy-uat.result == 'skipped') &&
+      needs.version-uat.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Validate PAT for PR creation
@@ -447,47 +430,40 @@ jobs:
 
           EXISTING_PR=$(gh pr list --base main --head uat --state open --json number --jq '.[0].number' 2>/dev/null || true)
           APP_URL="${{ needs.deploy-uat.outputs.deployment_url }}"
+          VERSION_TAG="${{ needs.version-uat.outputs.version_tag }}"
+          MAIN_REFERENCE_TAG="main-v${VERSION_TAG#test-v}"
           SHORT_SHA="${GITHUB_SHA:0:7}"
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          VERSION_TAG="${{ needs.version-uat.outputs.version_tag }}"
-          if [ -z "${VERSION_TAG}" ]; then
-            VERSION_TAG="test-v1.0.0.0"
-          fi
 
           PR_BODY=$(cat <<ENDOFBODY
           ## 🚀 Promote UAT → Production
 
-          This PR was automatically created after all CI checks and UAT deployments passed on the \`uat\` branch.
+          This PR was **automatically created** after all CI checks and UAT deployments passed on the \`uat\` branch.
 
           ### 📋 Pre-merge Checklist
-          - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} on UAT
+          - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }} on UAT
           - [ ] All acceptance criteria met
 
-          ### 🔗 Vercel UAT Deployment Links
-          | System | UAT Preview Link |
-          | --- | --- |
-          | ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} | ${APP_URL:-Not deployed (no changes)} |
+          ### 🔗 Vercel UAT Deployment Link
+          - ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}: ${APP_URL:-Not deployed (no changes)}
 
-          ### 🏷️ Version Tag
-          | Environment | Tag |
-          | --- | --- |
-          | TEST | ${VERSION_TAG} |
-          | UAT | ${VERSION_TAG} |
-          | MAIN | main-v${VERSION_TAG#test-v} |
+          ### 🏷️ Version References
+          | Environment | Version Tag |
+          |-------------|-------------|
+          | TEST (source sequence) | ${VERSION_TAG} |
+          | UAT (reference) | ${VERSION_TAG} |
+          | MAIN (target release) | ${MAIN_REFERENCE_TAG} |
 
           ### 🔍 Details
           - **Source branch:** uat
           - **Target branch:** main
-          - **Version tag:** \`${VERSION_TAG}\`
+          - **Version tag reference:** \`${VERSION_TAG}\`
           - **Commit:** \`${SHORT_SHA}\`
           - **Triggered at:** ${TIMESTAMP}
-          - **Pipeline run:** [View workflow run](${RUN_URL})
+          - **Pipeline run:** [View workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
           ---
-
-          Merge this PR to trigger Production deployment.
+          *Merge this PR to deploy to production. A production readiness gate will run automatically.*
           ENDOFBODY
           )
 
@@ -516,6 +492,7 @@ jobs:
       - frontend
       - sonarcloud
       - version-test
+      - version-uat
       - deploy-test
       - deploy-uat
       - create-pr-to-uat
@@ -536,30 +513,16 @@ jobs:
 
       - name: Revert failed commit
         run: |
-          set +e
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
           TARGET_SHA="${{ github.sha }}"
-          BRANCH_NAME="${{ github.ref_name }}"
+          PARENT_COUNT=$(git rev-list --parents -n 1 "${TARGET_SHA}" | awk '{print NF-1}')
 
-          git fetch origin "${BRANCH_NAME}" --no-tags
-          git checkout -B "${BRANCH_NAME}" "origin/${BRANCH_NAME}"
-
-          PARENT_COUNT=$(( $(git rev-list --parents -n 1 "${TARGET_SHA}" | wc -w) - 1 ))
           if [ "${PARENT_COUNT}" -gt 1 ]; then
+            echo "ℹ️ Reverting merge commit ${TARGET_SHA} with mainline parent 1"
             git revert -m 1 --no-edit "${TARGET_SHA}"
-            REVERT_STATUS=$?
           else
             git revert --no-edit "${TARGET_SHA}"
-            REVERT_STATUS=$?
-          fi
-
-          if [ "${REVERT_STATUS}" -ne 0 ]; then
-            git revert --abort || true
-            echo "⚠️ Auto-revert could not be applied cleanly (likely conflict or already reverted)."
-            echo "⚠️ Manual revert is required for ${TARGET_SHA}."
-            exit 0
           fi
 
           REVERT_MSG=$(git log -1 --pretty=%B)
