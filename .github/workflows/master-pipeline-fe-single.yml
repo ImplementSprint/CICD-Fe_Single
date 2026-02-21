@@ -11,7 +11,7 @@
 # ║    FE_SINGLE_WORKING_DIR (default: .)                           ║
 # ║    FE_SINGLE_IMAGE_NAME (default: fe-single-web)                ║
 # ║    FE_SINGLE_VERCEL_PROJECT_SECRET (required, no default)       ║
-# ║    FE_SINGLE_PR_TOKEN_SECRET (default: GH_PR_TOKEN)             ║
+# ║    Uses org/repo secret GH_PR_TOKEN for promotion PRs           ║
 # ╚══════════════════════════════════════════════════════════════════╝
 name: "Master Pipeline Orchestrator — FE Single"
 
@@ -72,7 +72,7 @@ jobs:
               - 'package.json'
               - 'sonar-project.properties'
 
-  single-config:
+  systems-config:
     name: "Resolve FE Single Configuration"
     runs-on: ubuntu-latest
     outputs:
@@ -80,120 +80,42 @@ jobs:
       working_dir: ${{ steps.resolve.outputs.working_dir }}
       image_name: ${{ steps.resolve.outputs.image_name }}
       vercel_project_secret: ${{ steps.resolve.outputs.vercel_project_secret }}
-      pr_token_secret: ${{ steps.resolve.outputs.pr_token_secret }}
     steps:
       - name: Resolve FE single config
         id: resolve
         env:
           FE_SINGLE_SYSTEM_JSON: ${{ vars.FE_SINGLE_SYSTEM_JSON }}
-          FE_SINGLE_SYSTEM_NAME: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}
-          FE_SINGLE_WORKING_DIR: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || '.' }}
-          FE_SINGLE_IMAGE_NAME: ${{ vars.FE_SINGLE_IMAGE_NAME != '' && vars.FE_SINGLE_IMAGE_NAME || 'fe-single-web' }}
-          FE_SINGLE_VERCEL_PROJECT_SECRET: ${{ vars.FE_SINGLE_VERCEL_PROJECT_SECRET }}
-          FE_SINGLE_PR_TOKEN_SECRET: ${{ vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN' }}
         run: |
-          if [ -n "${FE_SINGLE_SYSTEM_JSON}" ]; then
-            CONFIG=$(echo "${FE_SINGLE_SYSTEM_JSON}" | jq -c 'if type == "array" then .[0] else . end')
-
-            echo "${CONFIG}" | jq -e 'type == "object"' >/dev/null
-            echo "${CONFIG}" | jq -e '(.name|type=="string" and length>0) and (.dir|type=="string" and length>0) and (.image|type=="string" and length>0) and (.vercel_project_secret|type=="string" and length>0)' >/dev/null
-
-            SYSTEM_NAME=$(echo "${CONFIG}" | jq -r '.name')
-            WORKING_DIR=$(echo "${CONFIG}" | jq -r '.dir')
-            IMAGE_NAME=$(echo "${CONFIG}" | jq -r '.image')
-            VERCEL_PROJECT_SECRET=$(echo "${CONFIG}" | jq -r '.vercel_project_secret')
-            PR_TOKEN_SECRET="${FE_SINGLE_PR_TOKEN_SECRET}"
-          else
-            SYSTEM_NAME="${FE_SINGLE_SYSTEM_NAME}"
-            WORKING_DIR="${FE_SINGLE_WORKING_DIR}"
-            IMAGE_NAME="${FE_SINGLE_IMAGE_NAME}"
-            VERCEL_PROJECT_SECRET="${FE_SINGLE_VERCEL_PROJECT_SECRET}"
-            PR_TOKEN_SECRET="${FE_SINGLE_PR_TOKEN_SECRET}"
+          if [ -z "${FE_SINGLE_SYSTEM_JSON}" ]; then
+            echo "❌ Missing required repository variable FE_SINGLE_SYSTEM_JSON."
+            exit 1
           fi
 
-          if [ -z "${PR_TOKEN_SECRET}" ]; then
-            PR_TOKEN_SECRET="GH_PR_TOKEN"
-          fi
+          CONFIG=$(echo "${FE_SINGLE_SYSTEM_JSON}" | jq -c 'if type == "array" then .[0] else . end')
+
+          echo "${CONFIG}" | jq -e 'type == "object"' >/dev/null
+          echo "${CONFIG}" | jq -e '(.name|type=="string" and length>0) and (.dir|type=="string" and length>0) and (.image|type=="string" and length>0) and (.vercel_project_secret|type=="string" and length>0)' >/dev/null
+
+          SYSTEM_NAME=$(echo "${CONFIG}" | jq -r '.name')
+          WORKING_DIR=$(echo "${CONFIG}" | jq -r '.dir')
+          IMAGE_NAME=$(echo "${CONFIG}" | jq -r '.image')
+          VERCEL_PROJECT_SECRET=$(echo "${CONFIG}" | jq -r '.vercel_project_secret')
 
           echo "system_name=${SYSTEM_NAME}" >> "$GITHUB_OUTPUT"
           echo "working_dir=${WORKING_DIR}" >> "$GITHUB_OUTPUT"
           echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
           echo "vercel_project_secret=${VERCEL_PROJECT_SECRET}" >> "$GITHUB_OUTPUT"
-          echo "pr_token_secret=${PR_TOKEN_SECRET}" >> "$GITHUB_OUTPUT"
 
   frontend:
-    name: "${{ needs.single-config.outputs.system_name }} Pipeline"
-    needs: [detect-changes, single-config]
+    name: "${{ needs.systems-config.outputs.system_name }} Pipeline"
+    needs: [detect-changes, systems-config]
     if: needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.shared == 'true'
     uses: ./.github/workflows/front-end-workflow.yml
     with:
-      system-dir: ${{ needs.single-config.outputs.working_dir }}
-      system-name: ${{ needs.single-config.outputs.system_name }}
+      system-dir: ${{ needs.systems-config.outputs.working_dir }}
+      system-name: ${{ needs.systems-config.outputs.system_name }}
       enable-security-scan: true
     secrets: inherit
-
-  sonarcloud:
-    name: "SonarCloud — Monorepo Analysis"
-    needs: [frontend, detect-changes]
-    if: always() && needs.frontend.result != 'cancelled' && (needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.shared == 'true')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Validate SonarCloud project access
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
-          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
-        run: |
-          if [ -z "${SONAR_TOKEN}" ] || [ -z "${SONAR_ORGANIZATION}" ] || [ -z "${SONAR_PROJECT_KEY}" ]; then
-            echo "❌ SonarCloud preflight failed: one or more required secrets are empty."
-            exit 1
-          fi
-
-          RESPONSE=$(curl -sS -w "\n%{http_code}" -u "${SONAR_TOKEN}:" "https://sonarcloud.io/api/projects/search?organization=${SONAR_ORGANIZATION}&projects=${SONAR_PROJECT_KEY}")
-          HTTP_CODE=$(echo "${RESPONSE}" | tail -n 1)
-          BODY=$(echo "${RESPONSE}" | sed '$d')
-          TOTAL=$(echo "${BODY}" | jq -r '.paging.total // 0')
-
-          echo "🔎 Sonar preflight: org='${SONAR_ORGANIZATION}', project='${SONAR_PROJECT_KEY}', http=${HTTP_CODE}, total=${TOTAL}"
-
-          if [ "${HTTP_CODE}" -ne 200 ] || [ "${TOTAL}" -lt 1 ]; then
-            echo "❌ SonarCloud preflight failed: project not found or token has no access."
-            echo "Check SONAR_ORGANIZATION, SONAR_PROJECT_KEY, and SONAR_TOKEN permissions for this repository."
-            exit 1
-          fi
-
-          echo "✅ SonarCloud preflight passed."
-
-      - name: Run SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@v6
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: https://sonarcloud.io
-        with:
-          args: >
-            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
-            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
-
-  validate-vercel-secret-vars:
-    name: "Validate Vercel Secret-Name Variables"
-    runs-on: ubuntu-latest
-    needs: [single-config]
-    steps:
-      - name: Ensure required vars are set
-        env:
-          PROJECT_SECRET_VAR: ${{ needs.single-config.outputs.vercel_project_secret }}
-        run: |
-          if [ -z "${PROJECT_SECRET_VAR}" ]; then
-            echo "❌ Missing required FE Single Vercel project secret mapping."
-            echo "Set FE_SINGLE_SYSTEM_JSON.vercel_project_secret or FE_SINGLE_VERCEL_PROJECT_SECRET."
-            exit 1
-          fi
 
   version-test:
     name: "Version Tag — TEST"
@@ -208,8 +130,8 @@ jobs:
       mode: test
 
   deploy-test:
-    name: "TEST — ${{ needs.single-config.outputs.system_name }}"
-    needs: [frontend, validate-vercel-secret-vars, single-config]
+    name: "TEST — ${{ needs.systems-config.outputs.system_name }}"
+    needs: [frontend, systems-config]
     if: >-
       always() &&
       github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
@@ -217,16 +139,16 @@ jobs:
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/vercel-deploy.yml
     with:
-      working-directory: ${{ needs.single-config.outputs.working_dir }}
+      working-directory: ${{ needs.systems-config.outputs.working_dir }}
       environment: preview
     secrets:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets[needs.single-config.outputs.vercel_project_secret] }}
+      VERCEL_PROJECT_ID: ${{ secrets[needs.systems-config.outputs.vercel_project_secret] }}
 
   deploy-uat:
-    name: "UAT — ${{ needs.single-config.outputs.system_name }}"
-    needs: [frontend, validate-vercel-secret-vars, single-config]
+    name: "UAT — ${{ needs.systems-config.outputs.system_name }}"
+    needs: [frontend, systems-config]
     if: >-
       always() &&
       github.ref == 'refs/heads/uat' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
@@ -234,16 +156,16 @@ jobs:
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/vercel-deploy.yml
     with:
-      working-directory: ${{ needs.single-config.outputs.working_dir }}
+      working-directory: ${{ needs.systems-config.outputs.working_dir }}
       environment: preview
     secrets:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets[needs.single-config.outputs.vercel_project_secret] }}
+      VERCEL_PROJECT_ID: ${{ secrets[needs.systems-config.outputs.vercel_project_secret] }}
 
   production-gate:
     name: "Production Readiness Gate"
-    needs: [frontend, single-config]
+    needs: [frontend, systems-config]
     if: >-
       always() &&
       github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
@@ -251,22 +173,22 @@ jobs:
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/production-gate.yml
     with:
-      system-dir: ${{ needs.single-config.outputs.working_dir }}
+      system-dir: ${{ needs.systems-config.outputs.working_dir }}
       app-type: web
     secrets: inherit
 
   deploy-prod:
-    name: "Prod — ${{ needs.single-config.outputs.system_name }}"
-    needs: [production-gate, validate-vercel-secret-vars, single-config]
+    name: "Prod — ${{ needs.systems-config.outputs.system_name }}"
+    needs: [production-gate, systems-config]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true'))
     uses: ./.github/workflows/vercel-deploy.yml
     with:
-      working-directory: ${{ needs.single-config.outputs.working_dir }}
+      working-directory: ${{ needs.systems-config.outputs.working_dir }}
       environment: production
     secrets:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets[needs.single-config.outputs.vercel_project_secret] }}
+      VERCEL_PROJECT_ID: ${{ secrets[needs.systems-config.outputs.vercel_project_secret] }}
 
   update-about-link:
     name: "Update Repository About Link"
@@ -312,13 +234,13 @@ jobs:
       mode: main
 
   docker-main:
-    name: "GHCR — ${{ needs.single-config.outputs.system_name }}"
-    needs: [version-main-release, single-config]
+    name: "GHCR — ${{ needs.systems-config.outputs.system_name }}"
+    needs: [version-main-release, systems-config]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true'))
     uses: ./.github/workflows/docker-build.yml
     with:
-      working-directory: ${{ needs.single-config.outputs.working_dir }}
-      image-name: ${{ needs.single-config.outputs.image_name }}
+      working-directory: ${{ needs.systems-config.outputs.working_dir }}
+      image-name: ${{ needs.systems-config.outputs.image_name }}
       release-tag: ${{ needs.version-main-release.outputs.version_tag }}
       push-image: true
       scan-vulnerabilities: true
@@ -326,7 +248,7 @@ jobs:
 
   create-pr-to-uat:
     name: "Create PR → UAT"
-    needs: [frontend, version-test, deploy-test, single-config]
+    needs: [frontend, version-test, deploy-test, systems-config]
     if: >-
       always() &&
       github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
@@ -338,7 +260,7 @@ jobs:
     with:
       pipeline-kind: single
       direction: test-to-uat
-      system1-name: ${{ needs.single-config.outputs.system_name }}
+      system1-name: ${{ needs.systems-config.outputs.system_name }}
       system1-url: ${{ needs.deploy-test.outputs.deployment_url }}
       system1-result: ${{ needs.frontend.result }}
       version-tag: ${{ needs.version-test.outputs.version_tag }}
@@ -349,11 +271,11 @@ jobs:
       pipeline-result: ${{ (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') && 'success' || (needs.frontend.result == 'cancelled' && 'cancelled' || 'failure') }}
       dry-run: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
     secrets:
-      PR_TOKEN: ${{ secrets[needs.single-config.outputs.pr_token_secret] != '' && secrets[needs.single-config.outputs.pr_token_secret] || (secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || secrets.GHPR_TOKEN) }}
+      PR_TOKEN: ${{ secrets.GH_PR_TOKEN }}
 
   create-pr-to-main:
     name: "Create PR → Main"
-    needs: [frontend, deploy-uat, single-config]
+    needs: [frontend, deploy-uat, systems-config]
     if: >-
       always() &&
       github.ref == 'refs/heads/uat' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
@@ -364,7 +286,7 @@ jobs:
     with:
       pipeline-kind: single
       direction: uat-to-main
-      system1-name: ${{ needs.single-config.outputs.system_name }}
+      system1-name: ${{ needs.systems-config.outputs.system_name }}
       system1-url: ${{ needs.deploy-uat.outputs.deployment_url }}
       system1-result: ${{ needs.frontend.result }}
       tests-status: ${{ needs.frontend.result }}
@@ -374,26 +296,24 @@ jobs:
       pipeline-result: ${{ (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') && 'success' || (needs.frontend.result == 'cancelled' && 'cancelled' || 'failure') }}
       dry-run: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
     secrets:
-      PR_TOKEN: ${{ secrets[needs.single-config.outputs.pr_token_secret] != '' && secrets[needs.single-config.outputs.pr_token_secret] || (secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || secrets.GHPR_TOKEN) }}
+      PR_TOKEN: ${{ secrets.GH_PR_TOKEN }}
 
   pipeline-summary:
     name: "Pipeline Summary"
-    needs: [frontend, single-config]
+    needs: [frontend, systems-config]
     if: always()
     uses: ./.github/workflows/pipeline-summary.yml
     with:
       pipeline-kind: single
-      system1-name: ${{ needs.single-config.outputs.system_name }}
+      system1-name: ${{ needs.systems-config.outputs.system_name }}
       system1-result: ${{ needs.frontend.result }}
 
   auto-revert-on-failure:
     name: "Auto Revert on Failure"
     needs:
       [
-        single-config,
+        systems-config,
         frontend,
-        sonarcloud,
-        validate-vercel-secret-vars,
         version-test,
         deploy-test,
         deploy-uat,
@@ -451,15 +371,16 @@ jobs:
 
   notify-pipeline:
     name: "Notify Pipeline Status"
-    needs: [pipeline-summary, frontend, systems-config, auto-revert-on-failure]
+    needs: [pipeline-summary, frontend, deploy-test, deploy-uat, deploy-prod, auto-revert-on-failure]
     if: always()
     uses: ./.github/workflows/notifications.yml
     with:
-      status: ${{ needs.frontend.result == 'success' && 'success' || (needs.frontend.result == 'cancelled' && 'cancelled' || 'failure') }}
-      system-dir: ${{ needs.systems-config.outputs.system_name }}
+      status: ${{ (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') && 'success' || (needs.frontend.result == 'cancelled' && 'cancelled' || 'failure') }}
+      system-dir: FE Single
       pipeline-type: FE Single Master
       error-details: ${{ needs.frontend.result != 'success' && needs.frontend.result != 'skipped' && 'Master FE single pipeline reported failures.' || '' }}
       deployment-url: ${{ github.ref_name == 'main' && needs.deploy-prod.outputs.deployment_url || (github.ref_name == 'uat' && needs.deploy-uat.outputs.deployment_url || (github.ref_name == 'test' && needs.deploy-test.outputs.deployment_url || '')) }}
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+

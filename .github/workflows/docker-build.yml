@@ -113,9 +113,20 @@ jobs:
     if: ${{ inputs.scan-vulnerabilities }}
     needs: docker-build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
     outputs:
       result: ${{ steps.scan.outcome }}
     steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Resolve image reference
         id: image-ref
         env:
@@ -134,6 +145,9 @@ jobs:
 
       - name: Run Trivy Vulnerability Scanner
         id: scan
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ${{ steps.image-ref.outputs.image_ref }}
@@ -142,14 +156,25 @@ jobs:
           severity: "CRITICAL,HIGH"
           exit-code: "1"
 
-      - name: Upload Trivy Scan Results
+      - name: Check SARIF file exists
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        id: sarif-check
+        run: |
+          if [ -f "trivy-results.sarif" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️ trivy-results.sarif was not generated."
+          fi
+
+      - name: Upload Trivy Scan Results
+        if: always() && steps.sarif-check.outputs.exists == 'true'
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: "trivy-results.sarif"
 
       - name: Upload Scan Artifact
-        if: always()
+        if: always() && steps.sarif-check.outputs.exists == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.image-name }}-security-scan
