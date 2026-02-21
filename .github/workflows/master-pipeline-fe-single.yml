@@ -208,6 +208,38 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets[vars.FE_SINGLE_VERCEL_PROJECT_SECRET] }}
 
+  version-uat:
+    name: "Version Tag — UAT"
+    needs: [frontend]
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/uat' && github.event_name == 'push' &&
+      (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
+    runs-on: ubuntu-latest
+    outputs:
+      version_tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve Version Tag (from TEST)
+        id: version
+        run: |
+          PREFIX="test-v"
+          LATEST=$(git tag -l "${PREFIX}[0-9]*.[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n 1)
+
+          if [ -z "${LATEST}" ]; then
+            TAG="test-v1.0.0.0"
+          else
+            TAG="${LATEST}"
+          fi
+
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "✅ Using version tag for UAT: ${TAG}"
+
   production-gate:
     name: "Production Readiness Gate"
     needs: [frontend]
@@ -335,16 +367,26 @@ jobs:
           VERSION_TAG="${{ needs.version-test.outputs.version_tag }}"
           SHORT_SHA="${GITHUB_SHA:0:7}"
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           PR_BODY=$(cat <<ENDOFBODY
           ## 🚀 Promote TEST → UAT
+
+          This PR was automatically created after all CI checks and TEST deployments passed on the \`test\` branch.
 
           ### 📋 Pre-merge Checklist
           - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} on TEST
           - [ ] Ready for UAT validation
 
-          ### 🔗 Vercel TEST Deployment Link
-          - ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}: ${APP_URL:-Not deployed (no changes)}
+          ### 🔗 Vercel TEST Deployment Links
+          | System | TEST Preview Link |
+          | --- | --- |
+          | ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} | ${APP_URL:-Not deployed (no changes)} |
+
+          ### 🏷️ Version Tag
+          | Environment | Tag |
+          | --- | --- |
+          | TEST | ${VERSION_TAG:-test-v1.0.0.0} |
 
           ### 🔍 Details
           - **Source branch:** test
@@ -352,6 +394,11 @@ jobs:
           - **Version tag:** \`${VERSION_TAG}\`
           - **Commit:** \`${SHORT_SHA}\`
           - **Triggered at:** ${TIMESTAMP}
+          - **Pipeline run:** [View workflow run](${RUN_URL})
+
+          ---
+
+          Merge this PR to trigger UAT deployment.
           ENDOFBODY
           )
 
@@ -364,7 +411,7 @@ jobs:
 
   create-pr-to-main:
     name: "Create PR → Main"
-    needs: [frontend, deploy-uat]
+    needs: [frontend, deploy-uat, version-uat]
     if: >-
       always() &&
       github.ref == 'refs/heads/uat' && github.event_name == 'push' &&
@@ -402,22 +449,45 @@ jobs:
           APP_URL="${{ needs.deploy-uat.outputs.deployment_url }}"
           SHORT_SHA="${GITHUB_SHA:0:7}"
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          VERSION_TAG="${{ needs.version-uat.outputs.version_tag }}"
+          if [ -z "${VERSION_TAG}" ]; then
+            VERSION_TAG="test-v1.0.0.0"
+          fi
 
           PR_BODY=$(cat <<ENDOFBODY
           ## 🚀 Promote UAT → Production
+
+          This PR was automatically created after all CI checks and UAT deployments passed on the \`uat\` branch.
 
           ### 📋 Pre-merge Checklist
           - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} on UAT
           - [ ] All acceptance criteria met
 
-          ### 🔗 Vercel UAT Deployment Link
-          - ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}: ${APP_URL:-Not deployed (no changes)}
+          ### 🔗 Vercel UAT Deployment Links
+          | System | UAT Preview Link |
+          | --- | --- |
+          | ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} | ${APP_URL:-Not deployed (no changes)} |
+
+          ### 🏷️ Version Tag
+          | Environment | Tag |
+          | --- | --- |
+          | TEST | ${VERSION_TAG} |
+          | UAT | ${VERSION_TAG} |
+          | MAIN | main-v${VERSION_TAG#test-v} |
 
           ### 🔍 Details
           - **Source branch:** uat
           - **Target branch:** main
+          - **Version tag:** \`${VERSION_TAG}\`
           - **Commit:** \`${SHORT_SHA}\`
           - **Triggered at:** ${TIMESTAMP}
+          - **Pipeline run:** [View workflow run](${RUN_URL})
+
+          ---
+
+          Merge this PR to trigger Production deployment.
           ENDOFBODY
           )
 
