@@ -91,7 +91,7 @@ jobs:
           node-version: ${{ inputs.node-version }}
 
       - name: Install Dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci
 
       - name: Check Licenses
         run: |
