@@ -43,15 +43,23 @@ permissions:
 # Optional secret for orgs that block GITHUB_TOKEN PR creation:
 # GH_PR_TOKEN (preferred) or GHPR_TOKEN (legacy)
 
+# Optional secret for orgs that block GITHUB_TOKEN PR creation:
+# GH_PR_TOKEN (preferred) or GHPR_TOKEN (legacy)
+
 concurrency:
+  group: master-pipeline-fe-single-${{ github.ref }}
   group: master-pipeline-fe-single-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   detect-changes:
     name: "Detect Changed Files"
+  detect-changes:
+    name: "Detect Changed Files"
     runs-on: ubuntu-latest
     outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      shared: ${{ steps.filter.outputs.shared }}
       frontend: ${{ steps.filter.outputs.frontend }}
       shared: ${{ steps.filter.outputs.shared }}
     steps:
@@ -121,6 +129,8 @@ jobs:
     name: "SonarCloud — Monorepo Analysis"
     needs: [frontend, detect-changes]
     if: always() && needs.frontend.result != 'cancelled' && (needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.shared == 'true')
+    needs: [frontend, detect-changes]
+    if: always() && needs.frontend.result != 'cancelled' && (needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.shared == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -139,11 +149,28 @@ jobs:
             -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
             -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
 
+  validate-vercel-secret-vars:
+    name: "Validate Vercel Secret-Name Variables"
+    runs-on: ubuntu-latest
+    needs: [single-config]
+    steps:
+      - name: Ensure required vars are set
+        env:
+          PROJECT_SECRET_VAR: ${{ needs.single-config.outputs.vercel_project_secret }}
+        run: |
+          if [ -z "${PROJECT_SECRET_VAR}" ]; then
+            echo "❌ Missing required FE Single Vercel project secret mapping."
+            echo "Set FE_SINGLE_SYSTEM_JSON.vercel_project_secret or FE_SINGLE_VERCEL_PROJECT_SECRET."
+            exit 1
+          fi
+
   version-test:
     name: "Version Tag — TEST"
     needs: [frontend]
+    needs: [frontend]
     if: >-
       always() &&
+      github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
@@ -156,6 +183,7 @@ jobs:
     needs: [frontend, systems-config]
     if: >-
       always() &&
+      github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || (github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true')) &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
@@ -174,6 +202,7 @@ jobs:
     if: >-
       always() &&
       github.ref == 'refs/heads/uat' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/uat' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || (github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true')) &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/vercel-deploy.yml
@@ -190,6 +219,7 @@ jobs:
     needs: [frontend, systems-config]
     if: >-
       always() &&
+      github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || (github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true')) &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
@@ -215,8 +245,10 @@ jobs:
   version-main-release:
     name: "Version Tag — MAIN Release"
     needs: [deploy-prod]
+    needs: [deploy-prod]
     if: >-
       always() &&
+      github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') &&
       (needs.deploy-prod.result == 'success' || needs.deploy-prod.result == 'skipped')
@@ -243,12 +275,14 @@ jobs:
     if: >-
       always() &&
       github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || github.event.inputs.run_promotion == 'true') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') &&
       needs.version-test.result == 'success' &&
       (needs.deploy-test.result == 'success' || needs.deploy-test.result == 'skipped')
     uses: ./.github/workflows/promotion.yml
     with:
+      pipeline-kind: single
       pipeline-kind: single
       direction: test-to-uat
       system1-name: ${{ needs.systems-config.outputs.system_name }}
@@ -257,7 +291,7 @@ jobs:
       version-tag: ${{ needs.version-test.outputs.version_tag }}
       dry-run: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
     secrets:
-      PR_TOKEN: ${{ secrets.GH_PR_TOKEN }}
+      PR_TOKEN: ${{ secrets[needs.single-config.outputs.pr_token_secret] != '' && secrets[needs.single-config.outputs.pr_token_secret] || (secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || secrets.GHPR_TOKEN) }}
 
   create-pr-to-main:
     name: "Create PR → Main"
@@ -265,11 +299,13 @@ jobs:
     if: >-
       always() &&
       github.ref == 'refs/heads/uat' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/uat' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || github.event.inputs.run_promotion == 'true') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') &&
       (needs.deploy-uat.result == 'success' || needs.deploy-uat.result == 'skipped')
     uses: ./.github/workflows/promotion.yml
     with:
+      pipeline-kind: single
       pipeline-kind: single
       direction: uat-to-main
       system1-name: ${{ needs.systems-config.outputs.system_name }}
@@ -277,7 +313,7 @@ jobs:
       system1-result: ${{ needs.frontend.result }}
       dry-run: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
     secrets:
-      PR_TOKEN: ${{ secrets.GH_PR_TOKEN }}
+      PR_TOKEN: ${{ secrets[needs.single-config.outputs.pr_token_secret] != '' && secrets[needs.single-config.outputs.pr_token_secret] || (secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || secrets.GHPR_TOKEN) }}
 
   pipeline-summary:
     name: "Pipeline Summary"
@@ -296,6 +332,7 @@ jobs:
         systems-config,
         frontend,
         sonarcloud,
+        validate-vercel-secret-vars,
         version-test,
         deploy-test,
         deploy-uat,
