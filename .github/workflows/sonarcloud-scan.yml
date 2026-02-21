@@ -1,0 +1,101 @@
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  REUSABLE: SonarCloud Quality Gate                             ║
+# ║  Works for frontend, backend, and mobile repos                ║
+# ╚══════════════════════════════════════════════════════════════════╝
+name: "Reusable: SonarCloud Scan"
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        required: false
+        type: string
+        default: "."
+        description: "Project directory"
+      system-name:
+        required: true
+        type: string
+        description: "System name for display"
+      sources-path:
+        required: false
+        type: string
+        default: "src"
+        description: "Source code path relative to working directory"
+      tests-path:
+        required: false
+        type: string
+        default: "tests"
+        description: "Test files path relative to working directory"
+      coverage-report-path:
+        required: false
+        type: string
+        default: "coverage/lcov.info"
+        description: "Coverage report path relative to working directory"
+      coverage-artifact-name:
+        required: false
+        type: string
+        default: ""
+        description: "Name of coverage artifact to download (leave empty to skip)"
+      quality-gate-wait:
+        required: false
+        type: boolean
+        default: true
+        description: "Wait for SonarCloud quality gate result"
+    secrets:
+      SONAR_TOKEN:
+        required: true
+      SONAR_PROJECT_KEY:
+        required: true
+      SONAR_ORGANIZATION:
+        required: true
+    outputs:
+      quality-gate-status:
+        description: "SonarCloud quality gate status"
+        value: ${{ jobs.sonarcloud-scan.outputs.status }}
+
+jobs:
+  sonarcloud-scan:
+    name: "SonarCloud Analysis"
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.quality-gate.outputs.status }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Coverage Report
+        if: ${{ inputs.coverage-artifact-name != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.coverage-artifact-name }}
+          path: ${{ inputs.working-directory }}/coverage
+
+      - name: Run SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          projectBaseDir: ${{ inputs.working-directory }}
+          args: >
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
+            -Dsonar.sources=${{ inputs.sources-path }}
+            -Dsonar.tests=${{ inputs.tests-path }}
+            -Dsonar.javascript.lcov.reportPaths=${{ inputs.coverage-report-path }}
+            -Dsonar.qualitygate.wait=${{ inputs.quality-gate-wait }}
+            -Dsonar.pullrequest.provider=GitHub
+            -Dsonar.pullrequest.github.repository=${{ github.repository }}
+
+      - name: Check Quality Gate
+        id: quality-gate
+        if: always()
+        run: |
+          echo "status=${{ job.status }}" >> $GITHUB_OUTPUT
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ SonarCloud Quality Gate passed"
+          else
+            echo "❌ SonarCloud Quality Gate failed"
+          fi
