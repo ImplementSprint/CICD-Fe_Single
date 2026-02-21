@@ -6,11 +6,10 @@
 # ║    VERCEL_PROJECT_ID_FE_SINGLE (repo secret)                     ║
 # ║                                                                  ║
 # ║  Optional repository variables for reuse/customization:          ║
-# ║    FE_SINGLE_SYSTEM_NAME (default: Frontend-Root)               ║
-# ║    FE_SINGLE_WORKING_DIR (default: .)                           ║
-# ║    FE_SINGLE_IMAGE_NAME (default: fe-single-web)                ║
+# ║    FE_SINGLE_SYSTEM_NAME (default: system-1)                    ║
+# ║    FE_SINGLE_WORKING_DIR (default: system-1)                    ║
+# ║    FE_SINGLE_IMAGE_NAME (default: system-1-web)                 ║
 # ║    FE_SINGLE_VERCEL_PROJECT_SECRET (required, no default)       ║
-# ║    FE_SINGLE_PR_TOKEN_SECRET (default: GH_PR_TOKEN)             ║
 # ╚══════════════════════════════════════════════════════════════════╝
 name: "Master Pipeline Orchestrator — FE Single"
 
@@ -26,7 +25,8 @@ permissions:
   pull-requests: write
 
 # Optional secret for orgs that block GITHUB_TOKEN PR creation:
-# GH_PR_TOKEN (preferred) or GHPR_TOKEN (legacy)
+# GH_PR_TOKEN
+# (can be defined at organization or repository level)
 
 concurrency:
   group: master-pipeline-fe-single-${{ github.ref }}
@@ -58,13 +58,13 @@ jobs:
               - 'sonar-project.properties'
 
   frontend:
-    name: "${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} Pipeline"
+    name: "${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }} Pipeline"
     needs: [detect-changes]
     if: needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.shared == 'true'
     uses: ./.github/workflows/front-end-workflow.yml
     with:
-      system-dir: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || '.' }}
-      system-name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}
+      system-dir: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || 'system-1' }}
+      system-name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}
       enable-security-scan: true
     secrets: inherit
 
@@ -85,8 +85,8 @@ jobs:
         if: needs.frontend.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}-coverage
-          path: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || '.' }}/coverage
+          name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}-coverage
+          path: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || 'system-1' }}/coverage
         continue-on-error: true
 
       - name: Run SonarCloud Scan
@@ -134,8 +134,18 @@ jobs:
       - name: Create and Push Version Tag
         id: version
         run: |
-          SHORT_SHA="${GITHUB_SHA:0:7}"
-          TAG="test-v$(date -u +%Y.%m.%d).${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
+          PREFIX="test-v"
+          LATEST=$(git tag -l "${PREFIX}[0-9]*.[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n 1)
+
+          if [ -z "${LATEST}" ]; then
+            NEXT_VERSION="1.0.0.0"
+          else
+            RAW_VERSION="${LATEST#${PREFIX}}"
+            IFS='.' read -r MAJOR MINOR PATCH BUILD <<< "${RAW_VERSION}"
+            NEXT_VERSION="${MAJOR}.${MINOR}.${PATCH}.$((BUILD + 1))"
+          fi
+
+          TAG="${PREFIX}${NEXT_VERSION}"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -152,7 +162,7 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
   deploy-test:
-    name: "TEST — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
+    name: "TEST — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}"
     needs: [frontend, validate-vercel-secret-vars]
     if: >-
       always() &&
@@ -168,7 +178,7 @@ jobs:
       VERCEL_PROJECT_ID: ${{ secrets[vars.FE_SINGLE_VERCEL_PROJECT_SECRET] }}
 
   deploy-uat:
-    name: "UAT — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
+    name: "UAT — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}"
     needs: [frontend, validate-vercel-secret-vars]
     if: >-
       always() &&
@@ -197,7 +207,7 @@ jobs:
     secrets: inherit
 
   deploy-prod:
-    name: "Prod — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
+    name: "Prod — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}"
     needs: [production-gate, validate-vercel-secret-vars]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     uses: ./.github/workflows/vercel-deploy.yml
@@ -229,8 +239,17 @@ jobs:
       - name: Create and Push Release Tag
         id: version
         run: |
-          SHORT_SHA="${GITHUB_SHA:0:7}"
-          TAG="main-v$(date -u +%Y.%m.%d).${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
+          TEST_PREFIX="test-v"
+          MAIN_PREFIX="main-v"
+
+          LATEST_TEST=$(git tag -l "${TEST_PREFIX}[0-9]*.[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n 1)
+          if [ -z "${LATEST_TEST}" ]; then
+            echo "❌ No test version tag found. main release tag requires a prior test tag."
+            exit 1
+          fi
+
+          VERSION_FROM_TEST="${LATEST_TEST#${TEST_PREFIX}}"
+          TAG="${MAIN_PREFIX}${VERSION_FROM_TEST}"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -247,13 +266,13 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
   docker-main:
-    name: "GHCR — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
+    name: "GHCR — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}"
     needs: [version-main-release]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     uses: ./.github/workflows/docker-build.yml
     with:
       working-directory: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || '.' }}
-      image-name: ${{ vars.FE_SINGLE_IMAGE_NAME != '' && vars.FE_SINGLE_IMAGE_NAME || 'fe-single-web' }}
+      image-name: ${{ vars.FE_SINGLE_IMAGE_NAME != '' && vars.FE_SINGLE_IMAGE_NAME || 'system-1-web' }}
       release-tag: ${{ needs.version-main-release.outputs.version_tag }}
       push-image: true
       scan-vulnerabilities: true
@@ -272,25 +291,22 @@ jobs:
     steps:
       - name: Validate PAT for PR creation
         env:
-          PR_TOKEN_PRIMARY: ${{ secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] }}
-          PR_SECRET_NAME: ${{ vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN' }}
           GH_PR_TOKEN: ${{ secrets.GH_PR_TOKEN }}
-          GHPR_TOKEN: ${{ secrets.GHPR_TOKEN }}
         run: |
-          if [ -z "${PR_TOKEN_PRIMARY}" ] && [ -z "${GH_PR_TOKEN}" ] && [ -z "${GHPR_TOKEN}" ]; then
+          if [ -z "${GH_PR_TOKEN}" ]; then
             echo "❌ Missing PAT secret for PR creation."
-            echo "Add repository secret named by FE_SINGLE_PR_TOKEN_SECRET (${PR_SECRET_NAME}), or GH_PR_TOKEN/GHPR_TOKEN."
+            echo "Add GH_PR_TOKEN as an organization or repository secret."
             exit 1
           fi
 
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] != '' && secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] || (secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || secrets.GHPR_TOKEN) }}
+          token: ${{ secrets.GH_PR_TOKEN }}
 
       - name: Create PR from test → uat
         env:
-          GH_TOKEN: ${{ secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] != '' && secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] || (secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || secrets.GHPR_TOKEN) }}
+          GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
         run: |
           EXISTING_PR=$(gh pr list --base uat --head test --state open --json number --jq '.[0].number' 2>/dev/null || true)
           APP_URL="${{ needs.deploy-test.outputs.deployment_url }}"
@@ -302,11 +318,11 @@ jobs:
           ## 🚀 Promote TEST → UAT
 
           ### 📋 Pre-merge Checklist
-          - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} on TEST
+          - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }} on TEST
           - [ ] Ready for UAT validation
 
           ### 🔗 Vercel TEST Deployment Link
-          - ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}: ${APP_URL:-Not deployed (no changes)}
+          - ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}: ${APP_URL:-Not deployed (no changes)}
 
           ### 🔍 Details
           - **Source branch:** test
@@ -336,25 +352,22 @@ jobs:
     steps:
       - name: Validate PAT for PR creation
         env:
-          PR_TOKEN_PRIMARY: ${{ secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] }}
-          PR_SECRET_NAME: ${{ vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN' }}
           GH_PR_TOKEN: ${{ secrets.GH_PR_TOKEN }}
-          GHPR_TOKEN: ${{ secrets.GHPR_TOKEN }}
         run: |
-          if [ -z "${PR_TOKEN_PRIMARY}" ] && [ -z "${GH_PR_TOKEN}" ] && [ -z "${GHPR_TOKEN}" ]; then
+          if [ -z "${GH_PR_TOKEN}" ]; then
             echo "❌ Missing PAT secret for PR creation."
-            echo "Add repository secret named by FE_SINGLE_PR_TOKEN_SECRET (${PR_SECRET_NAME}), or GH_PR_TOKEN/GHPR_TOKEN."
+            echo "Add GH_PR_TOKEN as an organization or repository secret."
             exit 1
           fi
 
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] != '' && secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] || (secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || secrets.GHPR_TOKEN) }}
+          token: ${{ secrets.GH_PR_TOKEN }}
 
       - name: Create PR from uat → main
         env:
-          GH_TOKEN: ${{ secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] != '' && secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] || (secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || secrets.GHPR_TOKEN) }}
+          GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
         run: |
           EXISTING_PR=$(gh pr list --base main --head uat --state open --json number --jq '.[0].number' 2>/dev/null || true)
           APP_URL="${{ needs.deploy-uat.outputs.deployment_url }}"
@@ -365,11 +378,11 @@ jobs:
           ## 🚀 Promote UAT → Production
 
           ### 📋 Pre-merge Checklist
-          - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} on UAT
+          - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }} on UAT
           - [ ] All acceptance criteria met
 
           ### 🔗 Vercel UAT Deployment Link
-          - ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}: ${APP_URL:-Not deployed (no changes)}
+          - ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}: ${APP_URL:-Not deployed (no changes)}
 
           ### 🔍 Details
           - **Source branch:** uat
@@ -397,3 +410,34 @@ jobs:
           echo "Repository: ${{ github.repository }}"
           echo "Branch:     ${{ github.ref_name }}"
           echo "Frontend:   ${{ needs.frontend.result }}"
+
+  auto-revert-on-failure:
+    name: "Auto Revert Failed Commit"
+    needs:
+      - frontend
+      - sonarcloud
+      - version-test
+      - deploy-test
+      - deploy-uat
+      - create-pr-to-uat
+      - create-pr-to-main
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/test' || github.ref == 'refs/heads/uat') &&
+      github.actor != 'github-actions[bot]' &&
+      contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Revert failed commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git revert --no-edit ${{ github.sha }}
+          git push origin HEAD:${{ github.ref_name }}
