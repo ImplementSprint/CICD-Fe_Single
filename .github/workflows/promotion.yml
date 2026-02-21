@@ -249,7 +249,12 @@ jobs:
               )')
 
           CHECKLIST=$(echo "${SYSTEMS_JSON}" | jq -r --arg label "${CONTEXT_LABEL}" 'map("- [ ] Verified \(.name) on \($label)") | join("\n")')
-          ROWS=$(echo "${SYSTEMS_JSON}" | jq -r --argjson urls "${DEPLOYMENT_URLS_JSON}" '.[] | "| \(.name) | " + (($urls[.name] // "Not deployed (no changes)")) + " |"')
+          ROWS=$(echo "${SYSTEMS_JSON}" | jq -r --argjson urls "${DEPLOYMENT_URLS_JSON}" --arg runUrl "${RUN_URL}" '
+            .[]
+            | (($urls[.name] // "") | tostring) as $raw
+            | (if ($raw | length) > 0 then $raw else $runUrl end) as $url
+            | "| \(.name) | [Open deployment](" + $url + ") |"
+          ')
 
           if [ "${DIRECTION}" = "test-to-uat" ]; then
             CHECKLIST+=$'\n- [ ] Ready for UAT validation'
@@ -257,9 +262,15 @@ jobs:
             CHECKLIST+=$'\n- [ ] All acceptance criteria met'
           fi
 
-          AVAILABLE_LINKS=$(echo "${SYSTEMS_JSON}" | jq -r --argjson urls "${DEPLOYMENT_URLS_JSON}" '[.[] | select((($urls[.name] // "") | length) > 0)] | length')
+          AVAILABLE_LINKS=$(echo "${SYSTEMS_JSON}" | jq -r --argjson urls "${DEPLOYMENT_URLS_JSON}" --arg runUrl "${RUN_URL}" '
+            [.[]
+              | (($urls[.name] // "") | tostring) as $raw
+              | (if ($raw | length) > 0 then $raw else $runUrl end)
+              | select(length > 0)
+            ] | length
+          ')
 
-          EVIDENCE_ROWS=$(echo "${SYSTEMS_JSON}" | jq -r --argjson results "${RESULTS_JSON}" '.[] | "| CI — \(.name) | " + (($results[.name] // "unknown")) + " |"')
+          EVIDENCE_ROWS=$(echo "${SYSTEMS_JSON}" | jq -r --argjson results "${RESULTS_JSON}" --arg defaultResult "${DEFAULT_RESULT}" '.[] | "| CI — \(.name) | " + ((($results[.name] // "") | tostring) | if length > 0 then . else $defaultResult end) + " |"')
           EVIDENCE_ROWS=$(printf "%s\n| Deployment Links | %s available |" "${EVIDENCE_ROWS}" "${AVAILABLE_LINKS}")
           EVIDENCE_ROWS=$(printf "%s\n| Version Tag | %s |" "${EVIDENCE_ROWS}" "${VERSION_TAG:-N/A}")
 

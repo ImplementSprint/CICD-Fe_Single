@@ -42,6 +42,11 @@ on:
         type: boolean
         default: true
         description: "Run governance checks"
+      enable-sonar:
+        required: false
+        type: boolean
+        default: true
+        description: "Run SonarCloud scan"
     secrets:
       SONAR_TOKEN:
         required: false
@@ -96,6 +101,7 @@ jobs:
   # ── Stage 1E: SonarCloud Scan (before build) ───────────────────
   web-sonar:
     name: "Web — SonarCloud Scan"
+    if: ${{ inputs.enable-sonar }}
     needs: [web-unit-tests]
     uses: ./.github/workflows/sonarcloud-scan.yml
     with:

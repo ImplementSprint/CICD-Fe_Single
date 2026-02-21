@@ -117,62 +117,13 @@ jobs:
       enable-security-scan: true
     secrets: inherit
 
-  sonarcloud:
-    name: "SonarCloud — Monorepo Analysis"
-    needs: [frontend, detect-changes]
-    if: always() && needs.frontend.result != 'cancelled' && (needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.shared == 'true')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Validate SonarCloud project access
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
-          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
-        run: |
-          if [ -z "${SONAR_TOKEN}" ] || [ -z "${SONAR_ORGANIZATION}" ] || [ -z "${SONAR_PROJECT_KEY}" ]; then
-            echo "❌ SonarCloud preflight failed: one or more required secrets are empty."
-            exit 1
-          fi
-
-          RESPONSE=$(curl -sS -w "\n%{http_code}" -u "${SONAR_TOKEN}:" "https://sonarcloud.io/api/projects/search?organization=${SONAR_ORGANIZATION}&projects=${SONAR_PROJECT_KEY}")
-          HTTP_CODE=$(echo "${RESPONSE}" | tail -n 1)
-          BODY=$(echo "${RESPONSE}" | sed '$d')
-          TOTAL=$(echo "${BODY}" | jq -r '.paging.total // 0')
-
-          echo "🔎 Sonar preflight: org='${SONAR_ORGANIZATION}', project='${SONAR_PROJECT_KEY}', http=${HTTP_CODE}, total=${TOTAL}"
-
-          if [ "${HTTP_CODE}" -ne 200 ] || [ "${TOTAL}" -lt 1 ]; then
-            echo "❌ SonarCloud preflight failed: project not found or token has no access."
-            echo "Check SONAR_ORGANIZATION, SONAR_PROJECT_KEY, and SONAR_TOKEN permissions for this repository."
-            exit 1
-          fi
-
-          echo "✅ SonarCloud preflight passed."
-
-      - name: Run SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@v6
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: https://sonarcloud.io
-        with:
-          args: >
-            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
-            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
-
   version-test:
     name: "Version Tag — TEST"
-    needs: [frontend, sonarcloud]
+    needs: [frontend]
     if: >-
       always() &&
       github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') &&
-      (needs.sonarcloud.result == 'success' || needs.sonarcloud.result == 'skipped') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/versioning.yml
     with:
@@ -180,12 +131,11 @@ jobs:
 
   deploy-test:
     name: "TEST — ${{ needs.systems-config.outputs.system_name }}"
-    needs: [frontend, systems-config, sonarcloud]
+    needs: [frontend, systems-config]
     if: >-
       always() &&
       github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || (github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true')) &&
-      (needs.sonarcloud.result == 'success' || needs.sonarcloud.result == 'skipped') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/vercel-deploy.yml
     with:
@@ -198,12 +148,11 @@ jobs:
 
   deploy-uat:
     name: "UAT — ${{ needs.systems-config.outputs.system_name }}"
-    needs: [frontend, systems-config, sonarcloud]
+    needs: [frontend, systems-config]
     if: >-
       always() &&
       github.ref == 'refs/heads/uat' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || (github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true')) &&
-      (needs.sonarcloud.result == 'success' || needs.sonarcloud.result == 'skipped') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/vercel-deploy.yml
     with:
@@ -216,12 +165,11 @@ jobs:
 
   production-gate:
     name: "Production Readiness Gate"
-    needs: [frontend, systems-config, sonarcloud]
+    needs: [frontend, systems-config]
     if: >-
       always() &&
       github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'workflow_dispatch' || (github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true')) &&
-      (needs.sonarcloud.result == 'success' || needs.sonarcloud.result == 'skipped') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/production-gate.yml
     with:
@@ -242,9 +190,40 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets[needs.systems-config.outputs.vercel_project_secret] }}
 
+  update-about-link:
+    name: "Update Repository About Link"
+    needs: [deploy-prod]
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      needs.deploy-prod.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update repository homepage URL
+        env:
+          GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
+          DEPLOYMENT_URL: ${{ needs.deploy-prod.outputs.deployment_url }}
+        run: |
+          if [ -z "${DEPLOYMENT_URL}" ]; then
+            echo "⚠️ No deployment URL available; skipping About homepage update."
+            exit 0
+          fi
+
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "⚠️ GH_PR_TOKEN is not set; skipping About homepage update."
+            exit 0
+          fi
+
+          if gh api --method PATCH "repos/${{ github.repository }}" -f homepage="${DEPLOYMENT_URL}" >/dev/null 2>&1; then
+            echo "✅ Updated repository About homepage to ${DEPLOYMENT_URL}"
+          else
+            echo "⚠️ Failed to update repository About homepage (token may lack admin rights)."
+          fi
+
   version-main-release:
     name: "Version Tag — MAIN Release"
-    needs: [deploy-prod]
+    needs: [deploy-prod, update-about-link]
     if: >-
       always() &&
       github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
@@ -325,12 +304,12 @@ jobs:
       [
         systems-config,
         frontend,
-        sonarcloud,
         version-test,
         deploy-test,
         deploy-uat,
         production-gate,
         deploy-prod,
+        update-about-link,
         version-main-release,
         docker-main,
         create-pr-to-uat,
