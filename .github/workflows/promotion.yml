@@ -67,6 +67,26 @@ on:
         required: false
         type: string
         default: ""
+      tests-status:
+        required: false
+        type: string
+        default: ""
+      lint-status:
+        required: false
+        type: string
+        default: ""
+      security-status:
+        required: false
+        type: string
+        default: ""
+      sonar-status:
+        required: false
+        type: string
+        default: ""
+      pipeline-result:
+        required: false
+        type: string
+        default: ""
     secrets:
       PR_TOKEN:
         required: true
@@ -110,6 +130,11 @@ jobs:
           RESULTS_JSON_INPUT: ${{ inputs.results-json }}
           VERSION_TAG_INPUT: ${{ inputs.version-tag }}
           DRY_RUN: ${{ inputs.dry-run }}
+          TESTS_STATUS_INPUT: ${{ inputs.tests-status }}
+          LINT_STATUS_INPUT: ${{ inputs.lint-status }}
+          SECURITY_STATUS_INPUT: ${{ inputs.security-status }}
+          SONAR_STATUS_INPUT: ${{ inputs.sonar-status }}
+          PIPELINE_RESULT_INPUT: ${{ inputs.pipeline-result }}
         run: |
           retry() {
             local attempts=$1
@@ -128,6 +153,8 @@ jobs:
           SHORT_SHA="${GITHUB_SHA:0:7}"
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
+          VERSION_TAG="${VERSION_TAG_INPUT}"
+
           if [ "${DIRECTION}" = "test-to-uat" ]; then
             SOURCE_BRANCH="test"
             TARGET_BRANCH="uat"
@@ -137,7 +164,6 @@ jobs:
             FOOTER="*Merge this PR to trigger UAT deployment.*"
             INTRO="This PR was **automatically created** after all CI checks and TEST deployments passed on the \`test\` branch."
 
-            VERSION_TAG="${VERSION_TAG_INPUT}"
             if [ -z "${VERSION_TAG}" ] || [ "${VERSION_TAG}" = "test-v" ]; then
               VERSION_TAG=$(git tag -l 'test-v*' | grep -E '^test-v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
             fi
@@ -153,6 +179,10 @@ jobs:
             CONTEXT_LABEL="UAT"
             FOOTER="*Merge this PR to deploy to production. A production readiness gate will run automatically.*"
             INTRO="This PR was **automatically created** after all CI checks and UAT deployments passed on the \`uat\` branch."
+
+            if [ -z "${VERSION_TAG}" ]; then
+              VERSION_TAG=$(git tag -l 'test-v*' | grep -E '^test-v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+            fi
           else
             echo "❌ Invalid direction: ${DIRECTION}. Expected test-to-uat or uat-to-main."
             exit 1
@@ -186,7 +216,7 @@ jobs:
             exit 1
           fi
 
-          if [ -n "${DEPLOYMENT_URLS_JSON_INPUT}" ] && echo "${DEPLOYMENT_URLS_JSON_INPUT}" | jq -e . >/dev/null 2>&1; then
+          if [ -n "${DEPLOYMENT_URLS_JSON_INPUT}" ] && echo "${DEPLOYMENT_URLS_JSON_INPUT}" | jq -e . >/dev/null 2>&1 && [ "$(echo "${DEPLOYMENT_URLS_JSON_INPUT}" | jq 'length')" -gt 0 ]; then
             DEPLOYMENT_URLS_JSON="${DEPLOYMENT_URLS_JSON_INPUT}"
           else
             DEPLOYMENT_URLS_JSON=$(jq -nc \
@@ -194,9 +224,14 @@ jobs:
               --arg n2 "${SYSTEM2_NAME}" --arg u2 "${SYSTEM2_URL}" \
               --arg n3 "${SYSTEM3_NAME}" --arg u3 "${SYSTEM3_URL}" \
               '{($n1):$u1, ($n2):$u2, ($n3):$u3}')
+
+            if [ "$(echo "${DEPLOYMENT_URLS_JSON}" | jq '[to_entries[] | select(.key != "" and .value != "")] | length')" -eq 0 ]; then
+              RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              DEPLOYMENT_URLS_JSON=$(echo "${SYSTEMS_JSON}" | jq -c --arg runUrl "${RUN_URL}" 'reduce .[] as $s ({}; .[$s.name] = $runUrl)')
+            fi
           fi
 
-          if [ -n "${RESULTS_JSON_INPUT}" ] && echo "${RESULTS_JSON_INPUT}" | jq -e . >/dev/null 2>&1; then
+          if [ -n "${RESULTS_JSON_INPUT}" ] && echo "${RESULTS_JSON_INPUT}" | jq -e . >/dev/null 2>&1 && [ "$(echo "${RESULTS_JSON_INPUT}" | jq 'length')" -gt 0 ]; then
             RESULTS_JSON="${RESULTS_JSON_INPUT}"
           else
             RESULTS_JSON=$(jq -nc \
@@ -204,7 +239,51 @@ jobs:
               --arg n2 "${SYSTEM2_NAME}" --arg r2 "${SYSTEM2_RESULT}" \
               --arg n3 "${SYSTEM3_NAME}" --arg r3 "${SYSTEM3_RESULT}" \
               '{($n1):$r1, ($n2):$r2, ($n3):$r3}')
+
+            if [ "$(echo "${RESULTS_JSON}" | jq '[to_entries[] | select(.key != "" and .value != "")] | length')" -eq 0 ]; then
+              DEFAULT_RESULT="${SYSTEM1_RESULT}"
+              if [ -z "${DEFAULT_RESULT}" ]; then
+                DEFAULT_RESULT="success"
+              fi
+              RESULTS_JSON=$(echo "${SYSTEMS_JSON}" | jq -c --arg value "${DEFAULT_RESULT}" 'reduce .[] as $s ({}; .[$s.name] = $value)')
+            fi
           fi
+
+            if [ "${PIPELINE_KIND}" = "single" ]; then
+              if [ -z "${SYSTEM1_NAME}" ]; then
+                echo "❌ system1-name is required for single pipeline-kind."
+                exit 1
+              fi
+              SYSTEMS_JSON=$(jq -nc --arg n1 "${SYSTEM1_NAME}" '[{name:$n1}]')
+            fi
+
+            RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            DEFAULT_RESULT="${SYSTEM1_RESULT}"
+            if [ -z "${DEFAULT_RESULT}" ]; then
+              DEFAULT_RESULT="success"
+            fi
+
+            TESTS_STATUS="${TESTS_STATUS_INPUT}"
+            LINT_STATUS="${LINT_STATUS_INPUT}"
+            SECURITY_STATUS="${SECURITY_STATUS_INPUT}"
+            SONAR_STATUS="${SONAR_STATUS_INPUT}"
+            PIPELINE_RESULT="${PIPELINE_RESULT_INPUT}"
+
+            if [ -z "${TESTS_STATUS}" ]; then TESTS_STATUS="${DEFAULT_RESULT}"; fi
+            if [ -z "${LINT_STATUS}" ]; then LINT_STATUS="${DEFAULT_RESULT}"; fi
+            if [ -z "${SECURITY_STATUS}" ]; then SECURITY_STATUS="${DEFAULT_RESULT}"; fi
+            if [ -z "${SONAR_STATUS}" ]; then SONAR_STATUS="${DEFAULT_RESULT}"; fi
+            if [ -z "${PIPELINE_RESULT}" ]; then PIPELINE_RESULT="${DEFAULT_RESULT}"; fi
+
+            DEPLOYMENT_URLS_JSON=$(echo "${SYSTEMS_JSON}" | jq -c --argjson urls "${DEPLOYMENT_URLS_JSON}" --arg runUrl "${RUN_URL}" '
+              reduce .[] as $s ({};
+                .[$s.name] = ((($urls[$s.name] // "") | tostring) | if length > 0 then . else $runUrl end)
+              )')
+
+            RESULTS_JSON=$(echo "${SYSTEMS_JSON}" | jq -c --argjson results "${RESULTS_JSON}" --arg defaultResult "${DEFAULT_RESULT}" '
+              reduce .[] as $s ({};
+                .[$s.name] = ((($results[$s.name] // "") | tostring) | if length > 0 then . else $defaultResult end)
+              )')
 
           CHECKLIST=$(echo "${SYSTEMS_JSON}" | jq -r --arg label "${CONTEXT_LABEL}" 'map("- [ ] Verified \(.name) on \($label)") | join("\n")')
           ROWS=$(echo "${SYSTEMS_JSON}" | jq -r --argjson urls "${DEPLOYMENT_URLS_JSON}" --arg runUrl "${RUN_URL}" '
@@ -230,14 +309,13 @@ jobs:
 
           EVIDENCE_ROWS=$(echo "${SYSTEMS_JSON}" | jq -r --argjson results "${RESULTS_JSON}" --arg defaultResult "${DEFAULT_RESULT}" '.[] | "| CI — \(.name) | " + ((($results[.name] // "") | tostring) | if length > 0 then . else $defaultResult end) + " |"')
           EVIDENCE_ROWS=$(printf "%s\n| Deployment Links | %s available |" "${EVIDENCE_ROWS}" "${AVAILABLE_LINKS}")
-          if [ "${DIRECTION}" = "test-to-uat" ]; then
-            EVIDENCE_ROWS=$(printf "%s\n| Version Tag | %s |" "${EVIDENCE_ROWS}" "${VERSION_TAG}")
-          fi
+          EVIDENCE_ROWS=$(printf "%s\n| Version Tag | %s |" "${EVIDENCE_ROWS}" "${VERSION_TAG:-N/A}")
+
+          RELEASE_SUMMARY=$(printf -- "| Metric | Value |\n|--------|-------|\n| Version Tag | %s |\n| Short SHA | %s |\n| Compare | [View changes](%s) |\n| Pipeline Result | %s |" "${VERSION_TAG:-N/A}" "${SHORT_SHA}" "${COMPARE_URL}" "${PIPELINE_RESULT}")
+          QUALITY_GATES=$(printf -- "| Gate | Status |\n|------|--------|\n| Tests | %s |\n| Lint | %s |\n| Security | %s |\n| Sonar | %s |" "${TESTS_STATUS}" "${LINT_STATUS}" "${SECURITY_STATUS}" "${SONAR_STATUS}")
 
           DETAILS=$(printf -- "- **Source branch:** %s\n- **Target branch:** %s" "${SOURCE_BRANCH}" "${TARGET_BRANCH}")
-          if [ "${DIRECTION}" = "test-to-uat" ]; then
-            DETAILS=$(printf "%s\n- **Version tag:** \`%s\`" "${DETAILS}" "${VERSION_TAG}")
-          fi
+          DETAILS=$(printf "%s\n- **Version tag:** \`%s\`" "${DETAILS}" "${VERSION_TAG:-N/A}")
           DETAILS=$(printf "%s\n- **Commit:** \`%s\`\n- **Compare:** [View changes](%s)\n- **Triggered at:** %s\n- **Pipeline run:** [View workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" "${DETAILS}" "${SHORT_SHA}" "${COMPARE_URL}" "${TIMESTAMP}")
 
           PR_BODY=$(cat <<ENDOFBODY
@@ -257,6 +335,12 @@ jobs:
           | Check | Status |
           |-------|--------|
           ${EVIDENCE_ROWS}
+
+          ### 🧾 Release Summary
+          ${RELEASE_SUMMARY}
+
+          ### 🛡️ Quality Gates
+          ${QUALITY_GATES}
 
           ### 🔍 Details
           ${DETAILS}
