@@ -39,6 +39,7 @@ permissions:
   contents: write
   packages: write
   pull-requests: write
+  security-events: write
 
 # Optional secret for orgs that block GITHUB_TOKEN PR creation:
 # GH_PR_TOKEN (preferred) or GHPR_TOKEN (legacy)
