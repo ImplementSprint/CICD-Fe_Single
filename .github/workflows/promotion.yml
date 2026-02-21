@@ -153,8 +153,6 @@ jobs:
           SHORT_SHA="${GITHUB_SHA:0:7}"
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
-          VERSION_TAG="${VERSION_TAG_INPUT}"
-
           if [ "${DIRECTION}" = "test-to-uat" ]; then
             SOURCE_BRANCH="test"
             TARGET_BRANCH="uat"
@@ -164,6 +162,7 @@ jobs:
             FOOTER="*Merge this PR to trigger UAT deployment.*"
             INTRO="This PR was **automatically created** after all CI checks and TEST deployments passed on the \`test\` branch."
 
+            VERSION_TAG="${VERSION_TAG_INPUT}"
             if [ -z "${VERSION_TAG}" ] || [ "${VERSION_TAG}" = "test-v" ]; then
               VERSION_TAG=$(git tag -l 'test-v*' | grep -E '^test-v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
             fi
@@ -179,10 +178,6 @@ jobs:
             CONTEXT_LABEL="UAT"
             FOOTER="*Merge this PR to deploy to production. A production readiness gate will run automatically.*"
             INTRO="This PR was **automatically created** after all CI checks and UAT deployments passed on the \`uat\` branch."
-
-            if [ -z "${VERSION_TAG}" ]; then
-              VERSION_TAG=$(git tag -l 'test-v*' | grep -E '^test-v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
-            fi
           else
             echo "❌ Invalid direction: ${DIRECTION}. Expected test-to-uat or uat-to-main."
             exit 1
@@ -216,7 +211,7 @@ jobs:
             exit 1
           fi
 
-          if [ -n "${DEPLOYMENT_URLS_JSON_INPUT}" ] && echo "${DEPLOYMENT_URLS_JSON_INPUT}" | jq -e . >/dev/null 2>&1 && [ "$(echo "${DEPLOYMENT_URLS_JSON_INPUT}" | jq 'length')" -gt 0 ]; then
+          if [ -n "${DEPLOYMENT_URLS_JSON_INPUT}" ] && echo "${DEPLOYMENT_URLS_JSON_INPUT}" | jq -e . >/dev/null 2>&1; then
             DEPLOYMENT_URLS_JSON="${DEPLOYMENT_URLS_JSON_INPUT}"
           else
             DEPLOYMENT_URLS_JSON=$(jq -nc \
@@ -224,14 +219,9 @@ jobs:
               --arg n2 "${SYSTEM2_NAME}" --arg u2 "${SYSTEM2_URL}" \
               --arg n3 "${SYSTEM3_NAME}" --arg u3 "${SYSTEM3_URL}" \
               '{($n1):$u1, ($n2):$u2, ($n3):$u3}')
-
-            if [ "$(echo "${DEPLOYMENT_URLS_JSON}" | jq '[to_entries[] | select(.key != "" and .value != "")] | length')" -eq 0 ]; then
-              RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-              DEPLOYMENT_URLS_JSON=$(echo "${SYSTEMS_JSON}" | jq -c --arg runUrl "${RUN_URL}" 'reduce .[] as $s ({}; .[$s.name] = $runUrl)')
-            fi
           fi
 
-          if [ -n "${RESULTS_JSON_INPUT}" ] && echo "${RESULTS_JSON_INPUT}" | jq -e . >/dev/null 2>&1 && [ "$(echo "${RESULTS_JSON_INPUT}" | jq 'length')" -gt 0 ]; then
+          if [ -n "${RESULTS_JSON_INPUT}" ] && echo "${RESULTS_JSON_INPUT}" | jq -e . >/dev/null 2>&1; then
             RESULTS_JSON="${RESULTS_JSON_INPUT}"
           else
             RESULTS_JSON=$(jq -nc \
@@ -285,6 +275,8 @@ jobs:
                 .[$s.name] = ((($results[$s.name] // "") | tostring) | if length > 0 then . else $defaultResult end)
               )')
 
+=======
+>>>>>>> cc2e1b81e9b647524b90d26dacedcdb00d74135f
           CHECKLIST=$(echo "${SYSTEMS_JSON}" | jq -r --arg label "${CONTEXT_LABEL}" 'map("- [ ] Verified \(.name) on \($label)") | join("\n")')
           ROWS=$(echo "${SYSTEMS_JSON}" | jq -r --argjson urls "${DEPLOYMENT_URLS_JSON}" --arg runUrl "${RUN_URL}" '
             .[]
@@ -309,13 +301,17 @@ jobs:
 
           EVIDENCE_ROWS=$(echo "${SYSTEMS_JSON}" | jq -r --argjson results "${RESULTS_JSON}" --arg defaultResult "${DEFAULT_RESULT}" '.[] | "| CI — \(.name) | " + ((($results[.name] // "") | tostring) | if length > 0 then . else $defaultResult end) + " |"')
           EVIDENCE_ROWS=$(printf "%s\n| Deployment Links | %s available |" "${EVIDENCE_ROWS}" "${AVAILABLE_LINKS}")
-          EVIDENCE_ROWS=$(printf "%s\n| Version Tag | %s |" "${EVIDENCE_ROWS}" "${VERSION_TAG:-N/A}")
+          if [ "${DIRECTION}" = "test-to-uat" ]; then
+            EVIDENCE_ROWS=$(printf "%s\n| Version Tag | %s |" "${EVIDENCE_ROWS}" "${VERSION_TAG}")
+          fi
 
           RELEASE_SUMMARY=$(printf -- "| Metric | Value |\n|--------|-------|\n| Version Tag | %s |\n| Short SHA | %s |\n| Compare | [View changes](%s) |\n| Pipeline Result | %s |" "${VERSION_TAG:-N/A}" "${SHORT_SHA}" "${COMPARE_URL}" "${PIPELINE_RESULT}")
           QUALITY_GATES=$(printf -- "| Gate | Status |\n|------|--------|\n| Tests | %s |\n| Lint | %s |\n| Security | %s |\n| Sonar | %s |" "${TESTS_STATUS}" "${LINT_STATUS}" "${SECURITY_STATUS}" "${SONAR_STATUS}")
 
           DETAILS=$(printf -- "- **Source branch:** %s\n- **Target branch:** %s" "${SOURCE_BRANCH}" "${TARGET_BRANCH}")
-          DETAILS=$(printf "%s\n- **Version tag:** \`%s\`" "${DETAILS}" "${VERSION_TAG:-N/A}")
+          if [ "${DIRECTION}" = "test-to-uat" ]; then
+            DETAILS=$(printf "%s\n- **Version tag:** \`%s\`" "${DETAILS}" "${VERSION_TAG}")
+          fi
           DETAILS=$(printf "%s\n- **Commit:** \`%s\`\n- **Compare:** [View changes](%s)\n- **Triggered at:** %s\n- **Pipeline run:** [View workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" "${DETAILS}" "${SHORT_SHA}" "${COMPARE_URL}" "${TIMESTAMP}")
 
           PR_BODY=$(cat <<ENDOFBODY

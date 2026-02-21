@@ -46,6 +46,7 @@ jobs:
     steps:
       - name: Prepare Notification
         id: prepare
+<<<<<<< HEAD
         env:
           STATUS: ${{ inputs.status }}
           SYSTEM_DIR: ${{ inputs.system-dir }}
@@ -93,10 +94,14 @@ jobs:
           esac
 
           if [ "${STATUS}" = "success" ]; then
+=======
+        run: |
+          if [ "${{ inputs.status }}" = "success" ]; then
+>>>>>>> cc2e1b81e9b647524b90d26dacedcdb00d74135f
             EMOJI="✅"
             COLOR="good"
             TITLE="Pipeline Succeeded"
-          elif [ "${STATUS}" = "failure" ]; then
+          elif [ "${{ inputs.status }}" = "failure" ]; then
             EMOJI="❌"
             COLOR="danger"
             TITLE="Pipeline Failed"
@@ -106,7 +111,11 @@ jobs:
             TITLE="Pipeline Cancelled"
           fi
 
+<<<<<<< HEAD
           if [ "${STATUS}" = "failure" ] && { [ "${BRANCH_NAME}" = "main" ] || [ "${BRANCH_NAME}" = "uat" ]; }; then
+=======
+          if [ "${{ inputs.status }}" = "failure" ] || [ "${{ inputs.status }}" = "cancelled" ]; then
+>>>>>>> cc2e1b81e9b647524b90d26dacedcdb00d74135f
             MENTION="<!here>"
           else
             MENTION=""
@@ -125,12 +134,12 @@ jobs:
           echo "compare_url=$COMPARE_URL" >> $GITHUB_OUTPUT
 
           echo "$EMOJI $TITLE"
-          echo "  Systems:  ${SYSTEM_DIR}"
-          echo "  Pipeline: ${PIPELINE_TYPE}"
-          echo "  Branch:   ${BRANCH_NAME}"
-          echo "  Commit:   ${COMMIT_SHA}"
-          echo "  Actor:    ${ACTOR_NAME}"
-          echo "  Run URL:  ${RUN_URL}"
+          echo "  Systems:  ${{ inputs.system-dir }}"
+          echo "  Pipeline: ${{ inputs.pipeline-type }}"
+          echo "  Branch:   ${{ github.ref_name }}"
+          echo "  Commit:   ${{ github.sha }}"
+          echo "  Actor:    ${{ github.actor }}"
+          echo "  Run URL:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Notify Slack
         if: env.HAS_SLACK == 'true'

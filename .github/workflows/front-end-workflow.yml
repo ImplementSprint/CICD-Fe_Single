@@ -1,7 +1,8 @@
 # ╔══════════════════════════════════════════════════════════════════╗
 # ║  ORCHESTRATOR: Frontend Web CI/CD Pipeline                     ║
 # ║  Composes reusable workflows: test → lint → security →         ║
-# ║  governance → sonar → build                                     ║
+# ║  governance → build                                             ║
+# ║  SonarCloud runs once at the monorepo level (master-pipeline) ║
 # ╚══════════════════════════════════════════════════════════════════╝
 name: "Frontend Web CI/CD Pipeline"
 
@@ -50,10 +51,6 @@ on:
     secrets:
       SONAR_TOKEN:
         required: false
-      SONAR_PROJECT_KEY:
-        required: false
-      SONAR_ORGANIZATION:
-        required: false
 
 jobs:
   # ── Stage 1A: Unit Tests ─────────────────────────────────────────
@@ -98,25 +95,10 @@ jobs:
       test-command: npm run test
       coverage-threshold: ${{ inputs.coverage-threshold }}
 
-  # ── Stage 1E: SonarCloud Scan (before build) ───────────────────
-  web-sonar:
-    name: "Web — SonarCloud Scan"
-    if: ${{ inputs.enable-sonar }}
-    needs: [web-unit-tests]
-    uses: ./.github/workflows/sonarcloud-scan.yml
-    with:
-      working-directory: ${{ inputs.system-dir }}
-      system-name: ${{ inputs.system-name }}
-      coverage-artifact-name: ${{ inputs.system-name }}-coverage
-    secrets:
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
-      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
-
   # ── Stage 2: Build Web Application ─────────────────────────────
   web-build:
     name: "Web — Build"
-    needs: [web-unit-tests, web-lint, web-security, web-governance, web-sonar]
+    needs: [web-unit-tests, web-lint, web-security, web-governance]
     if: |
       always() &&
       !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
@@ -137,7 +119,7 @@ jobs:
             **/package-lock.json
 
       - name: Install Dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci
 
       - name: Validate Next.js + TypeScript Standard
         run: |

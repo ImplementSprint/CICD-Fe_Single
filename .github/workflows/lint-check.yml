@@ -63,7 +63,7 @@ jobs:
             **/package-lock.json
 
       - name: Install Dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci
 
       - name: Run Linter
         id: lint
