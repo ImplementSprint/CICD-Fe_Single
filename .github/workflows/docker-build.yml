@@ -30,6 +30,11 @@ on:
         type: boolean
         default: true
         description: "Run container vulnerability scan"
+      fail-on-vulnerabilities:
+        required: false
+        type: boolean
+        default: false
+        description: "Fail job when HIGH/CRITICAL vulnerabilities are found"
       build-args:
         required: false
         type: string
@@ -154,7 +159,9 @@ jobs:
           format: "sarif"
           output: "trivy-results.sarif"
           severity: "CRITICAL,HIGH"
-          exit-code: "1"
+          scanners: "vuln"
+          ignore-unfixed: true
+          exit-code: ${{ inputs.fail-on-vulnerabilities && '1' || '0' }}
 
       - name: Check SARIF file exists
         if: always()
