@@ -19,6 +19,20 @@ on:
     branches: [test, uat, main]
   pull_request:
     branches: [test, uat, main]
+  workflow_dispatch:
+    inputs:
+      run_deploy:
+        description: "Run deploy jobs"
+        type: boolean
+        default: true
+      run_promotion:
+        description: "Run PR promotion jobs"
+        type: boolean
+        default: true
+      dry_run:
+        description: "Preview-only mode (skip deploy/tag push, print PR body)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -87,7 +101,8 @@ jobs:
     needs: [frontend]
     if: >-
       always() &&
-      github.ref == 'refs/heads/test' && github.event_name == 'push' &&
+      github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/versioning.yml
     with:
@@ -98,7 +113,8 @@ jobs:
     needs: [frontend, validate-vercel-secret-vars]
     if: >-
       always() &&
-      github.ref == 'refs/heads/test' && github.event_name == 'push' &&
+      github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name != 'workflow_dispatch' || (github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true')) &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/vercel-deploy.yml
     with:
@@ -114,7 +130,8 @@ jobs:
     needs: [frontend, validate-vercel-secret-vars]
     if: >-
       always() &&
-      github.ref == 'refs/heads/uat' && github.event_name == 'push' &&
+      github.ref == 'refs/heads/uat' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name != 'workflow_dispatch' || (github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true')) &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/vercel-deploy.yml
     with:
@@ -130,7 +147,8 @@ jobs:
     needs: [frontend]
     if: >-
       always() &&
-      github.ref == 'refs/heads/main' && github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name != 'workflow_dispatch' || (github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true')) &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     uses: ./.github/workflows/production-gate.yml
     with:
@@ -141,7 +159,7 @@ jobs:
   deploy-prod:
     name: "Prod — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
     needs: [production-gate, validate-vercel-secret-vars]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true'))
     uses: ./.github/workflows/vercel-deploy.yml
     with:
       working-directory: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || '.' }}
@@ -156,7 +174,8 @@ jobs:
     needs: [deploy-prod]
     if: >-
       always() &&
-      github.ref == 'refs/heads/main' && github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') &&
       (needs.deploy-prod.result == 'success' || needs.deploy-prod.result == 'skipped')
     uses: ./.github/workflows/versioning.yml
     with:
@@ -165,7 +184,7 @@ jobs:
   docker-main:
     name: "GHCR — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
     needs: [version-main-release]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_deploy == 'true' && github.event.inputs.dry_run != 'true'))
     uses: ./.github/workflows/docker-build.yml
     with:
       working-directory: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || '.' }}
@@ -180,7 +199,8 @@ jobs:
     needs: [frontend, version-test, deploy-test]
     if: >-
       always() &&
-      github.ref == 'refs/heads/test' && github.event_name == 'push' &&
+      github.ref == 'refs/heads/test' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.run_promotion == 'true') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') &&
       needs.version-test.result == 'success' &&
       (needs.deploy-test.result == 'success' || needs.deploy-test.result == 'skipped')
@@ -190,7 +210,9 @@ jobs:
       direction: test-to-uat
       system1-name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}
       system1-url: ${{ needs.deploy-test.outputs.deployment_url }}
+      system1-result: ${{ needs.frontend.result }}
       version-tag: ${{ needs.version-test.outputs.version_tag }}
+      dry-run: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
     secrets:
       PR_TOKEN: ${{ secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] != '' && secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] || (secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || secrets.GHPR_TOKEN) }}
 
@@ -199,7 +221,8 @@ jobs:
     needs: [frontend, deploy-uat]
     if: >-
       always() &&
-      github.ref == 'refs/heads/uat' && github.event_name == 'push' &&
+      github.ref == 'refs/heads/uat' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.run_promotion == 'true') &&
       (needs.frontend.result == 'success' || needs.frontend.result == 'skipped') &&
       (needs.deploy-uat.result == 'success' || needs.deploy-uat.result == 'skipped')
     uses: ./.github/workflows/promotion.yml
@@ -208,6 +231,8 @@ jobs:
       direction: uat-to-main
       system1-name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}
       system1-url: ${{ needs.deploy-uat.outputs.deployment_url }}
+      system1-result: ${{ needs.frontend.result }}
+      dry-run: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
     secrets:
       PR_TOKEN: ${{ secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] != '' && secrets[vars.FE_SINGLE_PR_TOKEN_SECRET != '' && vars.FE_SINGLE_PR_TOKEN_SECRET || 'GH_PR_TOKEN'] || (secrets.GH_PR_TOKEN != '' && secrets.GH_PR_TOKEN || secrets.GHPR_TOKEN) }}
 

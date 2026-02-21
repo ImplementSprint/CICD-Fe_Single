@@ -39,6 +39,22 @@ on:
         required: false
         type: string
         default: ""
+      dry-run:
+        required: false
+        type: boolean
+        default: false
+      system1-result:
+        required: false
+        type: string
+        default: ""
+      system2-result:
+        required: false
+        type: string
+        default: ""
+      system3-result:
+        required: false
+        type: string
+        default: ""
     secrets:
       PR_TOKEN:
         required: true
@@ -74,8 +90,26 @@ jobs:
           SYSTEM2_URL: ${{ inputs.system2-url }}
           SYSTEM3_NAME: ${{ inputs.system3-name }}
           SYSTEM3_URL: ${{ inputs.system3-url }}
+          SYSTEM1_RESULT: ${{ inputs.system1-result }}
+          SYSTEM2_RESULT: ${{ inputs.system2-result }}
+          SYSTEM3_RESULT: ${{ inputs.system3-result }}
           VERSION_TAG_INPUT: ${{ inputs.version-tag }}
+          DRY_RUN: ${{ inputs.dry-run }}
         run: |
+          retry() {
+            local attempts=$1
+            local delay=$2
+            shift 2
+            local count=1
+            until "$@"; do
+              if [ "$count" -ge "$attempts" ]; then
+                return 1
+              fi
+              sleep "$delay"
+              count=$((count + 1))
+            done
+          }
+
           SHORT_SHA="${GITHUB_SHA:0:7}"
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
@@ -109,6 +143,8 @@ jobs:
             exit 1
           fi
 
+          COMPARE_URL="${{ github.server_url }}/${{ github.repository }}/compare/${TARGET_BRANCH}...${SOURCE_BRANCH}"
+
           EXISTING_PR=$(gh pr list --base "${TARGET_BRANCH}" --head "${SOURCE_BRANCH}" --state open --json number --jq '.[0].number' 2>/dev/null || true)
 
           CHECKLIST="- [ ] Verified ${SYSTEM1_NAME} on ${CONTEXT_LABEL}"
@@ -130,11 +166,28 @@ jobs:
             CHECKLIST="${CHECKLIST}\n- [ ] All acceptance criteria met"
           fi
 
+          AVAILABLE_LINKS=0
+          [ -n "${SYSTEM1_URL}" ] && AVAILABLE_LINKS=$((AVAILABLE_LINKS + 1))
+          [ -n "${SYSTEM2_NAME}" ] && [ -n "${SYSTEM2_URL}" ] && AVAILABLE_LINKS=$((AVAILABLE_LINKS + 1))
+          [ -n "${SYSTEM3_NAME}" ] && [ -n "${SYSTEM3_URL}" ] && AVAILABLE_LINKS=$((AVAILABLE_LINKS + 1))
+
+          EVIDENCE_ROWS="| CI — ${SYSTEM1_NAME} | ${SYSTEM1_RESULT:-unknown} |"
+          if [ -n "${SYSTEM2_NAME}" ]; then
+            EVIDENCE_ROWS="${EVIDENCE_ROWS}\n| CI — ${SYSTEM2_NAME} | ${SYSTEM2_RESULT:-unknown} |"
+          fi
+          if [ -n "${SYSTEM3_NAME}" ]; then
+            EVIDENCE_ROWS="${EVIDENCE_ROWS}\n| CI — ${SYSTEM3_NAME} | ${SYSTEM3_RESULT:-unknown} |"
+          fi
+          EVIDENCE_ROWS="${EVIDENCE_ROWS}\n| Deployment Links | ${AVAILABLE_LINKS} available |"
+          if [ "${DIRECTION}" = "test-to-uat" ]; then
+            EVIDENCE_ROWS="${EVIDENCE_ROWS}\n| Version Tag | ${VERSION_TAG} |"
+          fi
+
           DETAILS="- **Source branch:** ${SOURCE_BRANCH}\n- **Target branch:** ${TARGET_BRANCH}"
           if [ "${DIRECTION}" = "test-to-uat" ]; then
             DETAILS="${DETAILS}\n- **Version tag:** \`${VERSION_TAG}\`"
           fi
-          DETAILS="${DETAILS}\n- **Commit:** \`${SHORT_SHA}\`\n- **Triggered at:** ${TIMESTAMP}\n- **Pipeline run:** [View workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          DETAILS="${DETAILS}\n- **Commit:** \`${SHORT_SHA}\`\n- **Compare:** [View changes](${COMPARE_URL})\n- **Triggered at:** ${TIMESTAMP}\n- **Pipeline run:** [View workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
 
           PR_BODY=$(cat <<ENDOFBODY
           ${HEADER}
@@ -149,6 +202,11 @@ jobs:
           |--------|------------------|
           ${ROWS}
 
+          ### ✅ Evidence
+          | Check | Status |
+          |-------|--------|
+          ${EVIDENCE_ROWS}
+
           ### 🔍 Details
           ${DETAILS}
 
@@ -157,11 +215,17 @@ jobs:
           ENDOFBODY
           )
 
+          if [ "${DRY_RUN}" = "true" ]; then
+            echo "🧪 Dry run enabled. PR body preview:"
+            echo "${PR_BODY}"
+            exit 0
+          fi
+
           if [ -n "${EXISTING_PR}" ]; then
-            gh pr edit "${EXISTING_PR}" --body "${PR_BODY}"
+            retry 3 3 gh pr edit "${EXISTING_PR}" --body "${PR_BODY}"
             echo "✅ Updated PR #${EXISTING_PR}: ${SOURCE_BRANCH} → ${TARGET_BRANCH}"
             exit 0
           fi
 
-          gh pr create --base "${TARGET_BRANCH}" --head "${SOURCE_BRANCH}" --title "${TITLE}" --body "${PR_BODY}"
+          retry 3 3 gh pr create --base "${TARGET_BRANCH}" --head "${SOURCE_BRANCH}" --title "${TITLE}" --body "${PR_BODY}"
           echo "✅ Created PR: ${SOURCE_BRANCH} → ${TARGET_BRANCH}"
