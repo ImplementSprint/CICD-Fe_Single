@@ -494,4 +494,4 @@ jobs:
 
           REVERT_MSG=$(git log -1 --pretty=%B)
           git commit --amend -m "${REVERT_MSG}"$'\n\n[skip ci]'
-          git push origin HEAD:"${BRANCH_NAME}"
+          git push origin HEAD:${{ github.ref_name }}
