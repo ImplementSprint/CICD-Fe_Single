@@ -268,9 +268,40 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets[needs.single-config.outputs.vercel_project_secret] }}
 
+  update-about-link:
+    name: "Update Repository About Link"
+    needs: [deploy-prod]
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      needs.deploy-prod.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update repository homepage URL
+        env:
+          GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
+          DEPLOYMENT_URL: ${{ needs.deploy-prod.outputs.deployment_url }}
+        run: |
+          if [ -z "${DEPLOYMENT_URL}" ]; then
+            echo "⚠️ No deployment URL available; skipping About homepage update."
+            exit 0
+          fi
+
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "⚠️ GH_PR_TOKEN is not set; skipping About homepage update."
+            exit 0
+          fi
+
+          if gh api --method PATCH "repos/${{ github.repository }}" -f homepage="${DEPLOYMENT_URL}" >/dev/null 2>&1; then
+            echo "✅ Updated repository About homepage to ${DEPLOYMENT_URL}"
+          else
+            echo "⚠️ Failed to update repository About homepage (token may lack admin rights)."
+          fi
+
   version-main-release:
     name: "Version Tag — MAIN Release"
-    needs: [deploy-prod]
+    needs: [deploy-prod, update-about-link]
     if: >-
       always() &&
       github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
@@ -358,6 +389,7 @@ jobs:
         deploy-uat,
         production-gate,
         deploy-prod,
+        update-about-link,
         version-main-release,
         docker-main,
         create-pr-to-uat,
