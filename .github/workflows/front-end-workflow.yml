@@ -1,6 +1,7 @@
 # ╔══════════════════════════════════════════════════════════════════╗
 # ║  ORCHESTRATOR: Frontend Web CI/CD Pipeline                     ║
-# ║  Composes reusable workflows: test → lint → security → build  ║
+# ║  Composes reusable workflows: test → lint → security →         ║
+# ║  governance → build                                             ║
 # ║  SonarCloud runs once at the monorepo level (master-pipeline) ║
 # ╚══════════════════════════════════════════════════════════════════╝
 name: "Frontend Web CI/CD Pipeline"
@@ -37,6 +38,11 @@ on:
         type: boolean
         default: true
         description: "Run security scanning"
+      enable-governance:
+        required: false
+        type: boolean
+        default: true
+        description: "Run governance checks"
     secrets:
       SONAR_TOKEN:
         required: false
@@ -72,10 +78,22 @@ jobs:
       system-name: ${{ inputs.system-name }}
       node-version: ${{ inputs.node-version }}
 
+  # ── Stage 1D: Governance Checks (parallel with tests/lint/security) ──────────────
+  web-governance:
+    name: "Web — Governance Checks"
+    if: ${{ inputs.enable-governance }}
+    uses: ./.github/workflows/governance-check.yml
+    with:
+      working-directory: ${{ inputs.system-dir }}
+      system-name: ${{ inputs.system-name }}
+      node-version: ${{ inputs.node-version }}
+      test-command: npm run test
+      coverage-threshold: ${{ inputs.coverage-threshold }}
+
   # ── Stage 2: Build Web Application ─────────────────────────────
   web-build:
     name: "Web — Build"
-    needs: [web-unit-tests, web-lint, web-security]
+    needs: [web-unit-tests, web-lint, web-security, web-governance]
     if: |
       always() &&
       !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
@@ -92,7 +110,8 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: "npm"
-          cache-dependency-path: ${{ inputs.system-dir }}/package-lock.json
+          cache-dependency-path: |
+            **/package-lock.json
 
       - name: Install Dependencies
         run: npm ci
