@@ -6,9 +6,9 @@
 # ║    VERCEL_PROJECT_ID_FE_SINGLE (repo secret)                     ║
 # ║                                                                  ║
 # ║  Optional repository variables for reuse/customization:          ║
-# ║    FE_SINGLE_SYSTEM_NAME (default: system-1)                    ║
-# ║    FE_SINGLE_WORKING_DIR (default: system-1)                    ║
-# ║    FE_SINGLE_IMAGE_NAME (default: system-1-web)                 ║
+# ║    FE_SINGLE_SYSTEM_NAME (default: Frontend-Root)               ║
+# ║    FE_SINGLE_WORKING_DIR (default: .)                           ║
+# ║    FE_SINGLE_IMAGE_NAME (default: fe-single-web)                ║
 # ║    FE_SINGLE_VERCEL_PROJECT_SECRET (required, no default)       ║
 # ╚══════════════════════════════════════════════════════════════════╝
 name: "Master Pipeline Orchestrator — FE Single"
@@ -58,13 +58,13 @@ jobs:
               - 'sonar-project.properties'
 
   frontend:
-    name: "${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }} Pipeline"
+    name: "${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} Pipeline"
     needs: [detect-changes]
     if: needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.shared == 'true'
     uses: ./.github/workflows/front-end-workflow.yml
     with:
-      system-dir: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || 'system-1' }}
-      system-name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}
+      system-dir: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || '.' }}
+      system-name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}
       enable-security-scan: true
     secrets: inherit
 
@@ -81,15 +81,30 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate SonarCloud secrets
+        id: sonar-check
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+        run: |
+          if [ -z "${SONAR_TOKEN}" ] || [ -z "${SONAR_ORGANIZATION}" ] || [ -z "${SONAR_PROJECT_KEY}" ]; then
+            echo "run_scan=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ SonarCloud secrets are missing. Skipping SonarCloud scan."
+          else
+            echo "run_scan=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Download Coverage Artifact
         if: needs.frontend.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}-coverage
-          path: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || 'system-1' }}/coverage
+          name: ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}-coverage
+          path: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || '.' }}/coverage
         continue-on-error: true
 
       - name: Run SonarCloud Scan
+        if: steps.sonar-check.outputs.run_scan == 'true'
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -162,7 +177,7 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
   deploy-test:
-    name: "TEST — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}"
+    name: "TEST — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
     needs: [frontend, validate-vercel-secret-vars]
     if: >-
       always() &&
@@ -178,7 +193,7 @@ jobs:
       VERCEL_PROJECT_ID: ${{ secrets[vars.FE_SINGLE_VERCEL_PROJECT_SECRET] }}
 
   deploy-uat:
-    name: "UAT — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}"
+    name: "UAT — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
     needs: [frontend, validate-vercel-secret-vars]
     if: >-
       always() &&
@@ -207,7 +222,7 @@ jobs:
     secrets: inherit
 
   deploy-prod:
-    name: "Prod — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}"
+    name: "Prod — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
     needs: [production-gate, validate-vercel-secret-vars]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     uses: ./.github/workflows/vercel-deploy.yml
@@ -266,13 +281,13 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
   docker-main:
-    name: "GHCR — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}"
+    name: "GHCR — ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}"
     needs: [version-main-release]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     uses: ./.github/workflows/docker-build.yml
     with:
       working-directory: ${{ vars.FE_SINGLE_WORKING_DIR != '' && vars.FE_SINGLE_WORKING_DIR || '.' }}
-      image-name: ${{ vars.FE_SINGLE_IMAGE_NAME != '' && vars.FE_SINGLE_IMAGE_NAME || 'system-1-web' }}
+      image-name: ${{ vars.FE_SINGLE_IMAGE_NAME != '' && vars.FE_SINGLE_IMAGE_NAME || 'fe-single-web' }}
       release-tag: ${{ needs.version-main-release.outputs.version_tag }}
       push-image: true
       scan-vulnerabilities: true
@@ -325,11 +340,11 @@ jobs:
           ## 🚀 Promote TEST → UAT
 
           ### 📋 Pre-merge Checklist
-          - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }} on TEST
+          - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} on TEST
           - [ ] Ready for UAT validation
 
           ### 🔗 Vercel TEST Deployment Link
-          - ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}: ${APP_URL:-Not deployed (no changes)}
+          - ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}: ${APP_URL:-Not deployed (no changes)}
 
           ### 🔍 Details
           - **Source branch:** test
@@ -392,11 +407,11 @@ jobs:
           ## 🚀 Promote UAT → Production
 
           ### 📋 Pre-merge Checklist
-          - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }} on UAT
+          - [ ] Verified ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }} on UAT
           - [ ] All acceptance criteria met
 
           ### 🔗 Vercel UAT Deployment Link
-          - ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'system-1' }}: ${APP_URL:-Not deployed (no changes)}
+          - ${{ vars.FE_SINGLE_SYSTEM_NAME != '' && vars.FE_SINGLE_SYSTEM_NAME || 'Frontend-Root' }}: ${APP_URL:-Not deployed (no changes)}
 
           ### 🔍 Details
           - **Source branch:** uat
@@ -451,6 +466,7 @@ jobs:
 
       - name: Revert failed commit
         run: |
+          set +e
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -463,8 +479,17 @@ jobs:
           PARENT_COUNT=$(( $(git rev-list --parents -n 1 "${TARGET_SHA}" | wc -w) - 1 ))
           if [ "${PARENT_COUNT}" -gt 1 ]; then
             git revert -m 1 --no-edit "${TARGET_SHA}"
+            REVERT_STATUS=$?
           else
             git revert --no-edit "${TARGET_SHA}"
+            REVERT_STATUS=$?
+          fi
+
+          if [ "${REVERT_STATUS}" -ne 0 ]; then
+            git revert --abort || true
+            echo "⚠️ Auto-revert could not be applied cleanly (likely conflict or already reverted)."
+            echo "⚠️ Manual revert is required for ${TARGET_SHA}."
+            exit 0
           fi
 
           REVERT_MSG=$(git log -1 --pretty=%B)
