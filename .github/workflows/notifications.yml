@@ -25,6 +25,11 @@ on:
         type: string
         default: ""
         description: "Error details for failure notifications"
+      deployment-url:
+        required: false
+        type: string
+        default: ""
+        description: "Deployment URL to include when available"
     secrets:
       SLACK_WEBHOOK_URL:
         required: false
@@ -41,25 +46,67 @@ jobs:
     steps:
       - name: Prepare Notification
         id: prepare
+        env:
+          STATUS: ${{ inputs.status }}
+          SYSTEM_DIR: ${{ inputs['system-dir'] }}
+          PIPELINE_TYPE: ${{ inputs['pipeline-type'] }}
+          BRANCH_NAME: ${{ github.ref_name }}
+          ACTOR_NAME: ${{ github.actor }}
+          COMMIT_SHA: ${{ github.sha }}
+          SHORT_SHA: ${{ github.sha }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMPARE_DEFAULT: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
         run: |
-          if [ "${{ inputs.status }}" = "success" ]; then
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+
+          if [ "${EVENT_NAME}" = "push" ] && [ -n "${BEFORE_SHA}" ] && [ "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]; then
+            COMPARE_URL="${{ github.server_url }}/${{ github.repository }}/compare/${BEFORE_SHA}...${COMMIT_SHA}"
+          else
+            COMPARE_URL="${COMPARE_DEFAULT}"
+          fi
+
+          case "${BRANCH_NAME}" in
+            main)
+              ENV_LABEL="Production"
+              ENV_EMOJI="🏁"
+              ENV_COLOR="15548997"
+              ;;
+            uat)
+              ENV_LABEL="UAT"
+              ENV_EMOJI="🧪"
+              ENV_COLOR="15844367"
+              ;;
+            test)
+              ENV_LABEL="Test"
+              ENV_EMOJI="🔬"
+              ENV_COLOR="5793266"
+              ;;
+            *)
+              ENV_LABEL="${BRANCH_NAME}"
+              ENV_EMOJI="🌿"
+              ENV_COLOR="10181046"
+              ;;
+          esac
+
+          if [ "${STATUS}" = "success" ]; then
             EMOJI="✅"
             COLOR="good"
-            DISCORD_COLOR="3066993"
             TITLE="Pipeline Succeeded"
-          elif [ "${{ inputs.status }}" = "failure" ]; then
+          elif [ "${STATUS}" = "failure" ]; then
             EMOJI="❌"
             COLOR="danger"
-            DISCORD_COLOR="15158332"
             TITLE="Pipeline Failed"
           else
             EMOJI="⚠️"
             COLOR="warning"
-            DISCORD_COLOR="16776960"
             TITLE="Pipeline Cancelled"
           fi
 
-          if [ "${{ inputs.status }}" = "failure" ] || [ "${{ inputs.status }}" = "cancelled" ]; then
+          if [ "${STATUS}" = "failure" ] && { [ "${BRANCH_NAME}" = "main" ] || [ "${BRANCH_NAME}" = "uat" ]; }; then
             MENTION="<!here>"
           else
             MENTION=""
@@ -67,17 +114,23 @@ jobs:
 
           echo "emoji=$EMOJI" >> $GITHUB_OUTPUT
           echo "color=$COLOR" >> $GITHUB_OUTPUT
-          echo "discord_color=$DISCORD_COLOR" >> $GITHUB_OUTPUT
+          echo "env_color=$ENV_COLOR" >> $GITHUB_OUTPUT
+          echo "env_label=$ENV_LABEL" >> $GITHUB_OUTPUT
+          echo "env_emoji=$ENV_EMOJI" >> $GITHUB_OUTPUT
           echo "title=$TITLE" >> $GITHUB_OUTPUT
           echo "mention=$MENTION" >> $GITHUB_OUTPUT
+          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "workflow_name=$WORKFLOW_NAME" >> $GITHUB_OUTPUT
+          echo "run_attempt=$RUN_ATTEMPT" >> $GITHUB_OUTPUT
+          echo "compare_url=$COMPARE_URL" >> $GITHUB_OUTPUT
 
           echo "$EMOJI $TITLE"
-          echo "  Systems:  ${{ inputs.system-dir }}"
-          echo "  Pipeline: ${{ inputs.pipeline-type }}"
-          echo "  Branch:   ${{ github.ref_name }}"
-          echo "  Commit:   ${{ github.sha }}"
-          echo "  Actor:    ${{ github.actor }}"
-          echo "  Run URL:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "  Systems:  ${SYSTEM_DIR}"
+          echo "  Pipeline: ${PIPELINE_TYPE}"
+          echo "  Branch:   ${BRANCH_NAME}"
+          echo "  Commit:   ${COMMIT_SHA}"
+          echo "  Actor:    ${ACTOR_NAME}"
+          echo "  Run URL:  ${RUN_URL}"
 
       - name: Notify Slack
         if: env.HAS_SLACK == 'true'
@@ -100,21 +153,48 @@ jobs:
 
           retry 3 3 curl -sS -X POST "$SLACK_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"text\": \"${{ steps.prepare.outputs.mention }}\",
-              \"attachments\": [{
-                \"color\": \"${{ steps.prepare.outputs.color }}\",
-                \"title\": \"${{ steps.prepare.outputs.emoji }} ${{ steps.prepare.outputs.title }}\",
-                \"fields\": [
-                  {\"title\": \"Systems\", \"value\": \"${{ inputs.system-dir }}\", \"short\": false},
-                  {\"title\": \"Pipeline\", \"value\": \"${{ inputs.pipeline-type }}\", \"short\": true},
-                  {\"title\": \"Branch\", \"value\": \"${{ github.ref_name }}\", \"short\": true},
-                  {\"title\": \"Actor\", \"value\": \"${{ github.actor }}\", \"short\": true},
-                  {\"title\": \"Run\", \"value\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\", \"short\": false}
-                ],
-                \"footer\": \"<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Run>\"
-              }]
-            }"
+            -d "$(jq -n \
+              --arg mention '${{ steps.prepare.outputs.mention }}' \
+              --arg color '${{ steps.prepare.outputs.color }}' \
+              --arg title '${{ steps.prepare.outputs.emoji }} ${{ steps.prepare.outputs.title }}' \
+              --arg systems '${{ inputs['system-dir'] }}' \
+              --arg pipeline '${{ inputs['pipeline-type'] }}' \
+              --arg branch '${{ github.ref_name }}' \
+              --arg actor '${{ github.actor }}' \
+              --arg workflow '${{ steps.prepare.outputs.workflow_name }}' \
+              --arg attempt '${{ steps.prepare.outputs.run_attempt }}' \
+              --arg shortSha '${{ steps.prepare.outputs.short_sha }}' \
+              --arg compareUrl '${{ steps.prepare.outputs.compare_url }}' \
+              --arg runUrl '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}' \
+              --arg envLabel '${{ steps.prepare.outputs.env_emoji }} ${{ steps.prepare.outputs.env_label }}' \
+              --arg deploymentUrl '${{ inputs['deployment-url'] }}' \
+              --arg details '${{ inputs['error-details'] }}' \
+              '{
+                text: $mention,
+                attachments: [
+                  {
+                    color: $color,
+                    title: $title,
+                    fields: (
+                      [
+                        {title:"Systems", value:$systems, short:false},
+                        {title:"Pipeline", value:$pipeline, short:true},
+                        {title:"Environment", value:$envLabel, short:true},
+                        {title:"Branch", value:$branch, short:true},
+                        {title:"Workflow", value:$workflow, short:true},
+                        {title:"Run Attempt", value:$attempt, short:true},
+                        {title:"Short SHA", value:$shortSha, short:true},
+                        {title:"Actor", value:$actor, short:true},
+                        {title:"Compare", value:$compareUrl, short:false},
+                        {title:"Run", value:$runUrl, short:false}
+                      ]
+                      + (if ($deploymentUrl | length) > 0 then [{title:"Deployment", value:$deploymentUrl, short:false}] else [] end)
+                      + (if ($details | length) > 0 then [{title:"Details", value:$details, short:false}] else [] end)
+                    ),
+                    footer: ("<" + $runUrl + "|View Run>")
+                  }
+                ]
+              }')"
 
       - name: Notify Discord
         if: env.HAS_DISCORD == 'true'
@@ -137,19 +217,45 @@ jobs:
 
           retry 3 3 curl -sS -X POST "$DISCORD_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"content\": \"${{ steps.prepare.outputs.mention }}\",
-              \"embeds\": [{
-                \"title\": \"${{ steps.prepare.outputs.emoji }} ${{ steps.prepare.outputs.title }}\",
-                \"color\": ${{ steps.prepare.outputs.discord_color }},
-                \"description\": \"${{ inputs.error-details != '' && format('**Details:** {0}\\n', inputs.error-details) || '' }}\",
-                \"fields\": [
-                  {\"name\": \"Systems\", \"value\": \"${{ inputs.system-dir }}\", \"inline\": false},
-                  {\"name\": \"Pipeline\", \"value\": \"${{ inputs.pipeline-type }}\", \"inline\": true},
-                  {\"name\": \"Branch\", \"value\": \"${{ github.ref_name }}\", \"inline\": true},
-                  {\"name\": \"Actor\", \"value\": \"${{ github.actor }}\", \"inline\": true}
-                ],
-                \"url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
-              }]
-            }"
+            -d "$(jq -n \
+              --arg mention '${{ steps.prepare.outputs.mention }}' \
+              --arg title '${{ steps.prepare.outputs.emoji }} ${{ steps.prepare.outputs.title }}' \
+              --arg systems '${{ inputs['system-dir'] }}' \
+              --arg pipeline '${{ inputs['pipeline-type'] }}' \
+              --arg branch '${{ github.ref_name }}' \
+              --arg actor '${{ github.actor }}' \
+              --arg workflow '${{ steps.prepare.outputs.workflow_name }}' \
+              --arg attempt '${{ steps.prepare.outputs.run_attempt }}' \
+              --arg shortSha '${{ steps.prepare.outputs.short_sha }}' \
+              --arg compareUrl '${{ steps.prepare.outputs.compare_url }}' \
+              --arg runUrl '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}' \
+              --arg envLabel '${{ steps.prepare.outputs.env_emoji }} ${{ steps.prepare.outputs.env_label }}' \
+              --arg deploymentUrl '${{ inputs['deployment-url'] }}' \
+              --arg details '${{ inputs['error-details'] }}' \
+              --argjson envColor ${{ steps.prepare.outputs.env_color }} \
+              '{
+                content: $mention,
+                embeds: [
+                  {
+                    title: $title,
+                    color: $envColor,
+                    description: (if ($details | length) > 0 then ("**Details:** " + $details) else "" end),
+                    fields: (
+                      [
+                        {name:"Systems", value:$systems, inline:false},
+                        {name:"Pipeline", value:$pipeline, inline:true},
+                        {name:"Environment", value:$envLabel, inline:true},
+                        {name:"Branch", value:$branch, inline:true},
+                        {name:"Workflow", value:$workflow, inline:true},
+                        {name:"Run Attempt", value:$attempt, inline:true},
+                        {name:"Short SHA", value:$shortSha, inline:true},
+                        {name:"Actor", value:$actor, inline:true},
+                        {name:"Compare", value:$compareUrl, inline:false}
+                      ]
+                      + (if ($deploymentUrl | length) > 0 then [{name:"Deployment", value:$deploymentUrl, inline:false}] else [] end)
+                    ),
+                    url: $runUrl
+                  }
+                ]
+              }')"
 
