@@ -175,8 +175,8 @@ jobs:
               --arg deploymentUrl '${{ inputs['deployment-url'] }}' \
               --arg deploymentUrlsJson '${{ inputs['deployment-urls-json'] }}' \
               --arg details '${{ inputs['error-details'] }}' \
-              '{
-                deploymentLines: ((try ($deploymentUrlsJson | fromjson) catch {}) | to_entries | map(select((.key | length) > 0 and ((.value | tostring) | length) > 0)) | map("• " + .key + ": " + (.value | tostring)) | join("\n")),
+              '((try ($deploymentUrlsJson | fromjson) catch {}) | to_entries | map(select((.key | length) > 0 and ((.value | tostring) | length) > 0)) | map("• " + .key + ": " + (.value | tostring)) | join("\n")) as $deploymentLines |
+              {
                 text: $mention,
                 attachments: [
                   {
@@ -196,7 +196,7 @@ jobs:
                         {title:"Run", value:$runUrl, short:false}
                       ]
                       + (if ($deploymentUrl | length) > 0 then [{title:"Deployment", value:$deploymentUrl, short:false}] else [] end)
-                      + (if (.deploymentLines | length) > 0 then [{title:"Deployments", value:.deploymentLines, short:false}] else [] end)
+                      + (if ($deploymentLines | length) > 0 then [{title:"Deployments", value:$deploymentLines, short:false}] else [] end)
                       + (if ($details | length) > 0 then [{title:"Details", value:$details, short:false}] else [] end)
                     ),
                     footer: ("<" + $runUrl + "|View Run>")
@@ -242,8 +242,8 @@ jobs:
               --arg deploymentUrlsJson '${{ inputs['deployment-urls-json'] }}' \
               --arg details '${{ inputs['error-details'] }}' \
               --argjson envColor ${{ steps.prepare.outputs.env_color }} \
-              '{
-                deploymentLines: ((try ($deploymentUrlsJson | fromjson) catch {}) | to_entries | map(select((.key | length) > 0 and ((.value | tostring) | length) > 0)) | map("• " + .key + ": " + (.value | tostring)) | join("\n")),
+              '((try ($deploymentUrlsJson | fromjson) catch {}) | to_entries | map(select((.key | length) > 0 and ((.value | tostring) | length) > 0)) | map("• " + .key + ": " + (.value | tostring)) | join("\n")) as $deploymentLines |
+              {
                 content: $mention,
                 embeds: [
                   {
@@ -263,7 +263,7 @@ jobs:
                         {name:"Compare", value:$compareUrl, inline:false}
                       ]
                       + (if ($deploymentUrl | length) > 0 then [{name:"Deployment", value:$deploymentUrl, inline:false}] else [] end)
-                      + (if (.deploymentLines | length) > 0 then [{name:"Deployments", value:.deploymentLines, inline:false}] else [] end)
+                      + (if ($deploymentLines | length) > 0 then [{name:"Deployments", value:$deploymentLines, inline:false}] else [] end)
                     ),
                     url: $runUrl
                   }

@@ -337,7 +337,12 @@ jobs:
           QUALITY_GATES=$(printf -- "| Gate | Status |\n|------|--------|\n| Tests | %s |\n| Lint | %s |\n| Security | %s |\n| Sonar | %s |" "${TESTS_STATUS}" "${LINT_STATUS}" "${SECURITY_STATUS}" "${SONAR_STATUS}")
 
           DETAILS=$(printf -- "- **Source branch:** %s\n- **Target branch:** %s" "${SOURCE_BRANCH}" "${TARGET_BRANCH}")
-          DETAILS=$(printf "%s\n- **Version tag:** \`%s\`" "${DETAILS}" "${VERSION_TAG:-N/A}")
+          if [ "${PIPELINE_KIND}" = "multi" ]; then
+            VERSION_DETAILS=$(echo "${SYSTEMS_JSON}" | jq -r --argjson versions "${VERSIONS_JSON}" '.[] | "  - **" + .name + "**: `" + (((($versions[.name] // "") | tostring) | if length > 0 then . else "N/A" end)) + "`"')
+            DETAILS=$(printf "%s\n- **Version tags per system:**\n%s" "${DETAILS}" "${VERSION_DETAILS}")
+          else
+            DETAILS=$(printf "%s\n- **Version tag:** \`%s\`" "${DETAILS}" "${VERSION_TAG:-N/A}")
+          fi
           DETAILS=$(printf "%s\n- **Commit:** \`%s\`\n- **Compare:** [View changes](%s)\n- **Triggered at:** %s\n- **Pipeline run:** [View workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" "${DETAILS}" "${SHORT_SHA}" "${COMPARE_URL}" "${TIMESTAMP}")
 
           PR_BODY=$(cat <<ENDOFBODY
