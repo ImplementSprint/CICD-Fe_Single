@@ -211,6 +211,7 @@ jobs:
           if [ -z "${GH_TOKEN}" ]; then
             GH_TOKEN="${GH_PR_TOKEN_LEGACY}"
           fi
+          export GH_TOKEN
 
           if [ -z "${DEPLOYMENT_URL}" ]; then
             echo "⚠️ No deployment URL available; skipping About homepage update."
@@ -388,6 +389,9 @@ jobs:
       error-details: ${{ needs.frontend.result != 'success' && needs.frontend.result != 'skipped' && 'Master FE single pipeline reported failures.' || '' }}
       deployment-url: ${{ github.ref_name == 'main' && needs.deploy-prod.outputs.deployment_url || (github.ref_name == 'uat' && needs.deploy-uat.outputs.deployment_url || (github.ref_name == 'test' && needs.deploy-test.outputs.deployment_url || '')) }}
       deployment-urls-json: ${{ format('{{"{0}":"{1}"}}', needs.systems-config.outputs.system_name, (github.ref_name == 'main' && needs.deploy-prod.outputs.deployment_url || (github.ref_name == 'uat' && needs.deploy-uat.outputs.deployment_url || (github.ref_name == 'test' && needs.deploy-test.outputs.deployment_url || '')))) }}
+      success-image-url: ${{ vars.JED_SUCCESS_IMAGE_URL }}
+      failure-image-url: ${{ vars.JED_FAIL_IMAGE_URL }}
+      cancelled-image-url: ${{ vars.JED_CANCELLED_IMAGE_URL }}
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
