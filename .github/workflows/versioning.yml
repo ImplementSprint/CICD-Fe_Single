@@ -7,6 +7,21 @@ on:
         required: true
         type: string
         description: "Versioning mode: test or main"
+      stream:
+        required: false
+        type: string
+        default: "global"
+        description: "Version stream key (global keeps legacy test-v/main-v tags)"
+      update-package-locks:
+        required: false
+        type: boolean
+        default: false
+        description: "Refresh npm package-lock.json files and commit before tagging"
+      lockfile-node-version:
+        required: false
+        type: number
+        default: 20
+        description: "Node.js version used when refreshing package-lock files"
     outputs:
       version_tag:
         description: "Resolved version tag"
@@ -28,14 +43,70 @@ jobs:
           fetch-depth: 0
           token: ${{ github.token }}
 
+      - name: Setup Node.js for lockfile refresh
+        if: ${{ inputs.update-package-locks }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.lockfile-node-version }}
+
+      - name: Refresh npm package-lock files
+        if: ${{ inputs.update-package-locks }}
+        run: |
+          set -e
+
+          mapfile -t PACKAGE_JSONS < <(find . -type f -name package.json \
+            -not -path "*/node_modules/*" \
+            -not -path "*/.next/*" \
+            -not -path "*/coverage/*")
+
+          if [ "${#PACKAGE_JSONS[@]}" -eq 0 ]; then
+            echo "ℹ️ No package.json files found. Skipping lockfile refresh."
+            exit 0
+          fi
+
+          for pkg in "${PACKAGE_JSONS[@]}"; do
+            dir=$(dirname "$pkg")
+            echo "🔄 Refreshing lockfile in ${dir}"
+            (
+              cd "$dir"
+              npm install --package-lock-only --ignore-scripts
+            )
+          done
+
+          git add '**/package-lock.json'
+
+          if git diff --cached --quiet; then
+            echo "ℹ️ No lockfile changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(lockfiles): refresh package-lock files"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
       - name: Create and Push Tag
         id: version
         env:
           MODE: ${{ inputs.mode }}
+          STREAM: ${{ inputs.stream }}
         run: |
+          STREAM_KEY=$(echo "${STREAM}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+          if [ -z "${STREAM_KEY}" ]; then
+            STREAM_KEY="global"
+          fi
+
+          if [ "${STREAM_KEY}" = "global" ]; then
+            TEST_PREFIX="test-v"
+            MAIN_PREFIX="main-v"
+          else
+            TEST_PREFIX="test-${STREAM_KEY}-v"
+            MAIN_PREFIX="main-${STREAM_KEY}-v"
+          fi
+
           if [ "${MODE}" = "test" ]; then
-            PREFIX="test-v"
-            LATEST=$(git tag -l "${PREFIX}*" | grep -E '^test-v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+            PREFIX="${TEST_PREFIX}"
+            LATEST=$(git tag -l "${PREFIX}*" | grep -E "^${PREFIX}[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | sort -V | tail -n 1)
 
             if [ -z "${LATEST}" ]; then
               NEXT_VERSION="1.0.0.0"
@@ -64,12 +135,9 @@ jobs:
 
             TAG="${PREFIX}${NEXT_VERSION}"
           elif [ "${MODE}" = "main" ]; then
-            TEST_PREFIX="test-v"
-            MAIN_PREFIX="main-v"
-
-            LATEST_TEST=$(git tag -l "${TEST_PREFIX}*" | grep -E '^test-v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+            LATEST_TEST=$(git tag -l "${TEST_PREFIX}*" | grep -E "^${TEST_PREFIX}[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$" | sort -V | tail -n 1)
             if [ -z "${LATEST_TEST}" ]; then
-              echo "❌ No test version tag found. main release tag requires a prior test tag."
+              echo "❌ No test version tag found for stream '${STREAM_KEY}'. main release tag requires a prior test tag."
               exit 1
             fi
 
