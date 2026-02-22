@@ -203,7 +203,8 @@ jobs:
     steps:
       - name: Update repository homepage URL
         env:
-          GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
+          GH_PR_TOKEN_PRIMARY: ${{ secrets.GH_PR_TOKEN }}
+          GH_PR_TOKEN_LEGACY: ${{ secrets.GHPR_TOKEN }}
           DEPLOYMENT_URL: ${{ needs.deploy-prod.outputs.deployment_url }}
         run: |
           GH_TOKEN="${GH_PR_TOKEN_PRIMARY}"
@@ -218,7 +219,7 @@ jobs:
           fi
 
           if [ -z "${GH_TOKEN}" ]; then
-            echo "⚠️ GH_PR_TOKEN is not set; skipping About homepage update."
+            echo "⚠️ GH_PR_TOKEN/GHPR_TOKEN is not set; skipping About homepage update."
             exit 0
           fi
 
@@ -378,7 +379,7 @@ jobs:
 
   notify-pipeline:
     name: "Notify Pipeline Status"
-    needs: [pipeline-summary, frontend, deploy-test, deploy-uat, deploy-prod, auto-revert-on-failure]
+    needs: [pipeline-summary, frontend, systems-config, deploy-test, deploy-uat, deploy-prod, auto-revert-on-failure]
     if: always()
     uses: ./.github/workflows/notifications.yml
     with:
