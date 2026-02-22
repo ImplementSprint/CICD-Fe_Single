@@ -203,22 +203,16 @@ jobs:
     steps:
       - name: Update repository homepage URL
         env:
-          GH_PR_TOKEN_PRIMARY: ${{ secrets.GH_PR_TOKEN }}
-          GH_PR_TOKEN_LEGACY: ${{ secrets.GHPR_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PR_TOKEN }}
           DEPLOYMENT_URL: ${{ needs.deploy-prod.outputs.deployment_url }}
         run: |
-          GH_TOKEN="${GH_PR_TOKEN_PRIMARY}"
-          if [ -z "${GH_TOKEN}" ]; then
-            GH_TOKEN="${GH_PR_TOKEN_LEGACY}"
-          fi
-
           if [ -z "${DEPLOYMENT_URL}" ]; then
             echo "⚠️ No deployment URL available; skipping About homepage update."
             exit 0
           fi
 
           if [ -z "${GH_TOKEN}" ]; then
-            echo "⚠️ GH_PR_TOKEN/GHPR_TOKEN is not set; skipping About homepage update."
+            echo "⚠️ GH_PR_TOKEN is not set; skipping About homepage update."
             exit 0
           fi
 
@@ -378,7 +372,7 @@ jobs:
 
   notify-pipeline:
     name: "Notify Pipeline Status"
-    needs: [pipeline-summary, frontend, systems-config, deploy-test, deploy-uat, deploy-prod, auto-revert-on-failure]
+    needs: [pipeline-summary, frontend, deploy-test, deploy-uat, deploy-prod, auto-revert-on-failure]
     if: always()
     uses: ./.github/workflows/notifications.yml
     with:
@@ -387,7 +381,6 @@ jobs:
       pipeline-type: FE Single Master
       error-details: ${{ needs.frontend.result != 'success' && needs.frontend.result != 'skipped' && 'Master FE single pipeline reported failures.' || '' }}
       deployment-url: ${{ github.ref_name == 'main' && needs.deploy-prod.outputs.deployment_url || (github.ref_name == 'uat' && needs.deploy-uat.outputs.deployment_url || (github.ref_name == 'test' && needs.deploy-test.outputs.deployment_url || '')) }}
-      deployment-urls-json: ${{ format('{{"{0}":"{1}"}}', needs.systems-config.outputs.system_name, (github.ref_name == 'main' && needs.deploy-prod.outputs.deployment_url || (github.ref_name == 'uat' && needs.deploy-uat.outputs.deployment_url || (github.ref_name == 'test' && needs.deploy-test.outputs.deployment_url || '')))) }}
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
